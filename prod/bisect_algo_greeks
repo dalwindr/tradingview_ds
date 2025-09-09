@@ -1,0 +1,42 @@
+norm_cdf(x) =>
+    k = 1.0 / (1.0 + 0.2316419 * math.abs(x))
+    poly = k * (0.319381530 + k * (-0.356563782 + k * (1.781477937 + k * (-1.821255978 + 1.330274429 * k)) ))
+    approx = 1.0 - 0.398942280401 * math.exp(-0.5 * x * x) * poly
+    x < 0 ? 1.0 - approx : approx
+
+// Black-Scholes price
+bs_price(S, float K, T, r, q, sigma, call_option) =>
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    N_d1 = norm_cdf(call_option ? d1 : -d1)
+    N_d2 = norm_cdf(call_option ? d2 : -d2)
+    call_option ? S * math.exp(-q * T) * N_d1 - K * math.exp(-r * T) * N_d2 : K * math.exp(-r * T) * N_d2 - S * math.exp(-q * T) * N_d1[0]
+
+// Black-Scholes d1 for Delta calc
+bs_d1(S, K, T, r, q, sigma) =>
+    (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+
+// Delta
+delta(S, K, T, r, q, sigma, call_option) =>
+    d1 = bs_d1(S, K, T, r, q, sigma)
+    call_option ? math.exp(-q * T) * norm_cdf(d1) : -math.exp(-q * T) * norm_cdf(-d1)
+
+//  to find implied
+bisection_iv(market_price, S, K=7, T, r, q, call_option) =>
+    if market_price <= 0
+        0.0
+    else
+        low_ = 1e-5
+        high_ = 5.0
+        mid = 0.0
+        price = 0.0
+        for i = 0 to 100 by 1
+            mid := (low_ + high_) / 2
+            price := bs_price(S, K, T, r, q, mid, call_option)
+            if math.abs(price - market_price) < 0.0001
+                break
+            if price < market_price
+                low_ := mid
+            else
+                high_ := mid
+        mid
