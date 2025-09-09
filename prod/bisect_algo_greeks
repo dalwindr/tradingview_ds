@@ -73,6 +73,7 @@ theta(S, K, T, r, q, sigma, call_option) =>
         term2 = r * K * math.exp(-r * T) * norm_cdf(d2)
         term3 = -q * S * math.exp(-q * T) * norm_cdf(d1)
         term1 - term2 + term3
+
     else
         term2 = r * K * math.exp(-r * T) * norm_cdf(-d2)
         term3 = -q * S * math.exp(-q * T) * norm_cdf(-d1)
