@@ -14,28 +14,27 @@ div_yield = input.float(0.0, 'Dividend Yield', step=0.001)
 // -----------------------------------------------------
 // Fetch Spot and VIX
 vix_live = request.security("NSE:INDIAVIX", "3", close)
-vix_daily_close = request.security("NSE:INDIAVIX", "D", close)
-spot = request.security("BSE:SENSEX", "3", close)
+spot     = request.security("BSE:SENSEX", "3", close)
 rounded_spot = math.round(spot / 100) * 100
 
-
 // -----------------------------------------------------
-// Black-Scholes Functions
+// Black-Scholes helper functions
 norm_cdf(x) =>
     k = 1.0 / (1.0 + 0.2316419 * math.abs(x))
     poly = k * (0.319381530 + k * (-0.356563782 + k * (1.781477937 + k * (-1.821255978 + 1.330274429 * k))))
     approx = 1.0 - 0.398942280401 * math.exp(-0.5 * x * x) * poly
     x < 0 ? 1.0 - approx : approx
 
-bs_price(S, float K, T, r, q, sigma, call_option) =>
-    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+bs_d1(S,K,T,r,q,sigma) =>
+    (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+
+bs_price(S, K, T, r, q, sigma, call_option) =>
+    d1 = bs_d1(S,K,T,r,q,sigma)
     d2 = d1 - sigma * math.sqrt(T)
     N_d1 = norm_cdf(call_option ? d1 : -d1)
     N_d2 = norm_cdf(call_option ? d2 : -d2)
-    call_option ? S * math.exp(-q * T) * N_d1 - K * math.exp(-r * T) * N_d2 : K * math.exp(-r * T) * N_d2 - S * math.exp(-q * T) * N_d1
-
-bs_d1(S,K,T,r,q,sigma) =>
-    (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    call_option ? S * math.exp(-q * T) * N_d1 - K * math.exp(-r * T) * N_d2 :
+                  K * math.exp(-r * T) * N_d2 - S * math.exp(-q * T) * N_d1
 
 delta(S,K,T,r,q,sigma,call_option) =>
     d1 = bs_d1(S,K,T,r,q,sigma)
@@ -85,123 +84,96 @@ bisection_iv(market_price,S,K,T,r,q,call_option) =>
         mid
 
 // -----------------------------------------------------
-// Function to derive option ticker
+// Derive option ticker
 get_option_ticker(strike_val, is_call_val) =>
     strike_str_val = str.tostring(strike_val)
-    base_sym = str.substring(syminfo.ticker,0,3)
-    expiry_str_ = str.substring(syminfo.ticker,3,9)
-    type_str = is_call_val ? "C" : "P"
-    base_sym + expiry_str_ + type_str + strike_str_val
+    base_sym   = str.substring(syminfo.ticker,0,3)
+    expiry_str = str.substring(syminfo.ticker,3,9)
+    type_str   = is_call_val ? "C" : "P"
+    base_sym + expiry_str + type_str + strike_str_val
 
 // -----------------------------------------------------
-// Generate 3 strikes above and below ATM
-var array<float> call_above_strikes = array.new_float()
-var array<float> call_below_strikes = array.new_float()
-var array<float> put_above_strikes = array.new_float()
-var array<float> put_below_strikes = array.new_float()
+// Strikes
+var array<float> atm_below_n_above_strikes = array.new_float()
 
-array.clear(call_above_strikes)
-array.clear(call_below_strikes)
-array.clear(put_above_strikes)
-array.clear(put_below_strikes)
 
 for i = 1 to 3
     strike_up = rounded_spot + i*100
-    strike_down = rounded_spot - i*100
-    array.push(call_above_strikes,strike_up)
-    array.push(call_below_strikes,strike_down)
-    array.push(put_above_strikes,strike_up)
-    array.push(put_below_strikes,strike_down)
-
+    strike_dn = rounded_spot - i*100
+    array.push(atm_below_n_above_strikes, strike_up)
+    array.push(atm_below_n_above_strikes, strike_up)
 
 // -----------------------------------------------------
-// Arrays for IVs and Greeks
-var array<float> call_above_ivs = array.new_float()
-var array<float> call_below_ivs = array.new_float()
-var array<float> put_above_ivs = array.new_float()
-var array<float> put_below_ivs = array.new_float()
-
-var array<float> call_above_delta = array.new_float()
-var array<float> call_below_delta = array.new_float()
-var array<float> put_above_delta = array.new_float()
-var array<float> put_below_delta = array.new_float()
-
-var array<float> call_above_gamma = array.new_float()
-var array<float> call_below_gamma = array.new_float()
-var array<float> put_above_gamma= array.new_float()
-var array<float> put_below_gamma = array.new_float()
-
-var array<float> call_above_vega = array.new_float()
-var array<float> call_below_vega = array.new_float()
-var array<float> put_above_vega = array.new_float()
-var array<float> put_below_vega = array.new_float()
-
-var array<float> call_above_theta = array.new_float()
-var array<float> call_below_theta = array.new_float()
-var array<float> put_above_theta = array.new_float()
-var array<float> put_below_theta = array.new_float()
+// Arrays for data
+new_arr() => array.new_float()
+var call_ivs  = new_arr()
+var put_ivs   = new_arr()
+var call_delta= new_arr()
+var put_delta = new_arr()
 
 // -----------------------------------------------------
-// Function to calculate IVs and Greeks for all strikes
-calc_ivs_for_strikes(float[] strike_arr, bool is_call, float[] iv_arr, float[] delta_arr, float[] gamma_arr, float[] vega_arr, float[] theta_arr) =>
+// Fill Greeks + IV
+calc_ivs_for_strikes(strike_arr, is_call, iv_arr, delta_arr) =>
     for i = 0 to array.size(strike_arr)-1
         strike_temp = array.get(strike_arr,i)
-        opt_ticker = get_option_ticker(strike_temp,is_call)
-        opt_price = request.security(opt_ticker,"3",close)
-        iv = bisection_iv(opt_price,spot,strike_temp,1/52,rf_rate,div_yield,is_call) // weekly expiry
-        opt_delta = delta(spot,strike_temp,1/52,rf_rate,div_yield,iv,is_call)
+        opt_ticker  = get_option_ticker(strike_temp,is_call)
+        opt_price   = request.security(opt_ticker,"3",close)
+        iv          = bisection_iv(opt_price,spot,strike_temp,1/52,rf_rate,div_yield,is_call)
+        dlt         = delta(spot,strike_temp,1/52,rf_rate,div_yield,iv,is_call)
         array.push(iv_arr,iv)
-        array.push(delta_arr,opt_delta)
-        array.push(gamma_arr,gamma(spot,strike_temp,1/52,rf_rate,div_yield,iv))
-        array.push(vega_arr,vega(spot,strike_temp,1/52,rf_rate,div_yield,iv))
-        array.push(theta_arr,theta(spot,strike_temp,1/52,rf_rate,div_yield,iv,is_call))
+        array.push(delta_arr,dlt)
+
+// compute
+calc_ivs_for_strikes(atm_below_n_above_strikes,true, call_ivs,call_delta)
+calc_ivs_for_strikes(atm_below_n_above_strikes,false, put_ivs, put_delta)
 
 // -----------------------------------------------------
-
-
-
-
-// Calculate IVs and Greeks for all strikes
-calc_ivs_for_strikes(call_above_strikes,true,call_above_ivs,call_above_delta,call_above_gamma,call_above_vega,call_above_theta)
-calc_ivs_for_strikes(call_below_strikes,true,call_below_ivs,call_below_delta,call_below_gamma,call_below_vega,call_below_theta)
-calc_ivs_for_strikes(put_above_strikes,false,put_above_ivs,put_above_delta,put_above_gamma,put_above_vega,put_above_theta)
-calc_ivs_for_strikes(put_below_strikes,false,put_below_ivs,put_below_delta,put_below_gamma,put_below_vega,put_below_theta)
-
-// -----------------------------------------------------
-// Select recommended strike (highest IV skew)
+// Select recommended strike + side
 select_trade_strike() =>
-    // Simple logic: find strike with highest IV difference call vs put
     max_diff = -1.0
     float strike_sel = na
-    for i=0 to array.size(call_above_ivs)-1
-        call_iv = array.get(call_above_ivs,i)
-        put_iv  = array.get(put_above_ivs,i)
-        diff = math.abs(call_iv - put_iv)
-        if diff > max_diff
-            max_diff := diff
-            strike_sel := array.get(call_above_strikes,i)
-    strike_sel
+    string side_sel = ""
+    for i=0 to array.size(call_ivs)-1
+        call_iv = array.get(call_ivs,i)
+        put_iv  = array.get(put_ivs,i)
+        strike  = array.get(call_side_strikes,i)
+        diff_call = call_iv - put_iv
+        diff_put  = put_iv - call_iv
+        if diff_call > max_diff
+            max_diff := diff_call
+            strike_sel := strike
+            side_sel := "CALL"
+        if diff_put > max_diff
+            max_diff := diff_put
+            strike_sel := strike
+            side_sel := "PUT"
+    [strike_sel, side_sel]
 
-recommended_strike = select_trade_strike()
+// use function
+[strike_rec, side_rec] = select_trade_strike()
 
 // -----------------------------------------------------
-// Display Table
-var table option_table = table.new(position.top_right, 7, 10, border_width=1)
+// Table
+var table option_table = table.new(position.top_right, 3, 10, border_width=1)
 if barstate.islast
     table.cell(option_table,0,0,"Strike",text_color=color.white,bgcolor=color.blue)
     table.cell(option_table,1,0,"Call IV",text_color=color.white,bgcolor=color.blue)
     table.cell(option_table,2,0,"Put IV",text_color=color.white,bgcolor=color.blue)
-    table.cell(option_table,3,0,"Delta",text_color=color.white,bgcolor=color.blue)
-    table.cell(option_table,4,0,"Gamma",text_color=color.white,bgcolor=color.blue)
-    table.cell(option_table,5,0,"Vega",text_color=color.white,bgcolor=color.blue)
-    table.cell(option_table,6,0,"Theta",text_color=color.white,bgcolor=color.blue)
 
     for i=0 to array.size(call_above_strikes)-1
         strike = array.get(call_above_strikes,i)
-        table.cell(option_table,0,i+1,str.tostring(strike) + (strike==recommended_strike ? " ✅" : ""))
-        table.cell(option_table,1,i+1,str.tostring(array.get(call_above_ivs,i),'#.###'))
-        table.cell(option_table,2,i+1,str.tostring(array.get(put_above_ivs,i),'#.###'))
-        table.cell(option_table,3,i+1,str.tostring(array.get(call_above_delta,i),'#.###'))
-        table.cell(option_table,4,i+1,str.tostring(array.get(call_above_gamma,i),'#.###'))
-        table.cell(option_table,5,i+1,str.tostring(array.get(call_above_vega,i),'#.###'))
-        table.cell(option_table,6,i+1,str.tostring(array.get(call_above_theta,i),'#.###'))
+        call_iv = array.get(call_ivs,i)
+        put_iv  = array.get(put_ivs,i)
+
+        row_bg = strike==strike_rec ? color.new(color.green,80) : na
+        table.cell(option_table,0,i+1,str.tostring(strike), bgcolor=row_bg)
+        table.cell(option_table,1,i+1,str.tostring(call_iv,'#.###'),
+                   bgcolor=(strike==strike_rec and side_rec=="CALL") ? color.green : na)
+        table.cell(option_table,2,i+1,str.tostring(put_iv,'#.###'),
+                   bgcolor=(strike==strike_rec and side_rec=="PUT") ? color.green : na)
+
+// -----------------------------------------------------
+// Display Clean Signal
+if barstate.islast and not na(strike_rec)
+    label.new(bar_index, spot, text="BUY " + side_rec + " @" + str.tostring(strike_rec),
+              style=label.style_label_up, color=color.orange, textcolor=color.white)
