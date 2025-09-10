@@ -136,7 +136,7 @@ select_trade_strike() =>
     for i=0 to array.size(call_ivs)-1
         call_iv = array.get(call_ivs,i)
         put_iv  = array.get(put_ivs,i)
-        strike  = array.get(call_side_strikes,i)
+        strike  = array.get(atm_below_n_above_strikes,i)
         diff_call = call_iv - put_iv
         diff_put  = put_iv - call_iv
         if diff_call > max_diff
@@ -160,8 +160,8 @@ if barstate.islast
     table.cell(option_table,1,0,"Call IV",text_color=color.white,bgcolor=color.blue)
     table.cell(option_table,2,0,"Put IV",text_color=color.white,bgcolor=color.blue)
 
-    for i=0 to array.size(call_above_strikes)-1
-        strike = array.get(call_above_strikes,i)
+    for i=0 to array.size(atm_below_n_above_strikes)-1
+        strike = array.get(atm_below_n_above_strikes,i)
         call_iv = array.get(call_ivs,i)
         put_iv  = array.get(put_ivs,i)
 

@@ -1,0 +1,435 @@
+// -----------------------------
+// Heart: Strike selection module
+// -----------------------------
+// Assumptions: the following arrays/vars exist and are up-to-date:
+// call_above_ivs, call_below_ivs, put_above_ivs, put_below_ivs
+// call_above_delta, call_below_delta, put_above_delta, put_below_delta
+// call_above_vega, call_below_vega, put_above_vega, put_below_vega
+// call_above_theta, call_below_theta, put_above_theta, put_below_theta
+// call_above_gamma, call_below_gamma, put_above_gamma, put_below_gamma
+// ATM variables: put_iv, call_iv, put_opt_delta, call_opt_delta, option_put_price, option_call_price
+// Context vars: atm_iv_rank (0..1), vix_rank_norm (0..1), iv_spike_flag (bool), iv_contract_flag (bool), is_in_cooldown (bool), spot
+
+// >>> Configurable inputs (tweakable)
+pref_delta        = input.float(0.45, "Preferred buy delta (abs)", step=0.01)
+delta_window      = input.float(0.25, "Delta tolerance (for score)", step=0.01)
+buy_threshold     = input.float(0.65, "Buy threshold", step=0.01)
+wait_threshold    = input.float(0.45, "Wait threshold", step=0.01)
+avoid_threshold   = input.float(0.40, "Avoid threshold", step=0.01)
+tie_threshold     = input.float(0.05, "Tie threshold", step=0.01)
+theta_threshold   = input.float(0.20, "Theta threshold (abs) for scoring", step=0.01)
+
+// Weights (sum should be near 1.0 but not required)
+w_iv  = input.float(0.25, "w_IV", step=0.01)
+w_sk  = input.float(0.12, "w_Skew", step=0.01)
+w_dl  = input.float(0.20, "w_Delta", step=0.01)
+w_vg  = input.float(0.10, "w_Vega", step=0.01)
+w_th  = input.float(0.08, "w_Theta", step=0.01)
+w_ctx = input.float(0.15, "w_Context", step=0.01)
+w_mb  = input.float(0.10, "w_MomentumBias", step=0.01)
+
+// Helper: safe array min/max (ignore NaN)
+arr_min(arr) =>
+    m = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if not na(v)
+            m := na(m) ? v : math.min(m, v)
+    m
+
+arr_max(arr) =>
+    m = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if not na(v)
+            m := na(m) ? v : math.max(m, v)
+    m
+
+// Helper to read paired arrays safely (index i)
+safe_get(arr, i) =>
+    i >= 0 and i < array.size(arr) ? array.get(arr, i) : na
+
+// Build candidate lists (side, strike, and associated metrics)
+// We'll produce arrays: cand_side[], cand_strike[], cand_iv[], cand_delta[], cand_vega[], cand_theta[], cand_gamma[], cand_idx_in_pool[]
+var string[] cand_side = array.new_string()
+var float[]  cand_strike = array.new_float()
+var float[]  cand_iv = array.new_float()
+var float[]  cand_delta = array.new_float()
+var float[]  cand_vega = array.new_float()
+var float[]  cand_theta = array.new_float()
+var float[]  cand_gamma = array.new_float()
+var int[]    cand_pool_index = array.new_int() // index to original arrays if needed
+
+// clear candidate arrays each bar
+array.clear(cand_side)
+array.clear(cand_strike)
+array.clear(cand_iv)
+array.clear(cand_delta)
+array.clear(cand_vega)
+array.clear(cand_theta)
+array.clear(cand_gamma)
+array.clear(cand_pool_index)
+
+// include PUTs: below + ATM + above
+// Put-below
+for i = 0 to array.size(put_below_strikes) - 1
+    s = array.get(put_below_strikes, i)
+    ivv = safe_get(put_below_ivs, i)
+    delv = safe_get(put_below_delta, i)
+    veg = safe_get(put_below_vega, i)
+    th = safe_get(put_below_theta, i)
+    gm = safe_get(put_below_gamma, i)
+    array.push(cand_side, "PUT")
+    array.push(cand_strike, s)
+    array.push(cand_iv, ivv)
+    array.push(cand_delta, delv)
+    array.push(cand_vega, veg)
+    array.push(cand_theta, th)
+    array.push(cand_gamma, gm)
+    array.push(cand_pool_index, i)  // index within put_below arrays
+
+// ATM PUT (current ticker)
+array.push(cand_side, "PUT")
+array.push(cand_strike, ticker_strike) // ticker_strike exists in your script
+array.push(cand_iv, put_iv)
+array.push(cand_delta, put_opt_delta)
+array.push(cand_vega, na)  // if you want compute ATM vega earlier, else na
+array.push(cand_theta, na)
+array.push(cand_gamma, na)
+array.push(cand_pool_index, -1)
+
+// Put-above
+for i = 0 to array.size(put_above_strikes) - 1
+    s = array.get(put_above_strikes, i)
+    ivv = safe_get(put_above_ivs, i)
+    delv = safe_get(put_above_delta, i)
+    veg = safe_get(put_above_vega, i)
+    th = safe_get(put_above_theta, i)
+    gm = safe_get(put_above_gamma, i)
+    array.push(cand_side, "PUT")
+    array.push(cand_strike, s)
+    array.push(cand_iv, ivv)
+    array.push(cand_delta, delv)
+    array.push(cand_vega, veg)
+    array.push(cand_theta, th)
+    array.push(cand_gamma, gm)
+    array.push(cand_pool_index, i)
+
+// CALLs: below + ATM + above
+for i = 0 to array.size(call_below_strikes) - 1
+    s = array.get(call_below_strikes, i)
+    ivv = safe_get(call_below_ivs, i)
+    delv = safe_get(call_below_delta, i)
+    veg = safe_get(call_below_vega, i)
+    th = safe_get(call_below_theta, i)
+    gm = safe_get(call_below_gamma, i)
+    array.push(cand_side, "CALL")
+    array.push(cand_strike, s)
+    array.push(cand_iv, ivv)
+    array.push(cand_delta, delv)
+    array.push(cand_vega, veg)
+    array.push(cand_theta, th)
+    array.push(cand_gamma, gm)
+    array.push(cand_pool_index, i)
+
+array.push(cand_side, "CALL")
+array.push(cand_strike, ticker_strike)
+array.push(cand_iv, call_iv)
+array.push(cand_delta, call_opt_delta)
+array.push(cand_vega, na)
+array.push(cand_theta, na)
+array.push(cand_gamma, na)
+array.push(cand_pool_index, -1)
+
+for i = 0 to array.size(call_above_strikes) - 1
+    s = array.get(call_above_strikes, i)
+    ivv = safe_get(call_above_ivs, i)
+    delv = safe_get(call_above_delta, i)
+    veg = safe_get(call_above_vega, i)
+    th = safe_get(call_above_theta, i)
+    gm = safe_get(call_above_gamma, i)
+    array.push(cand_side, "CALL")
+    array.push(cand_strike, s)
+    array.push(cand_iv, ivv)
+    array.push(cand_delta, delv)
+    array.push(cand_vega, veg)
+    array.push(cand_theta, th)
+    array.push(cand_gamma, gm)
+    array.push(cand_pool_index, i)
+
+// If no candidates, exit
+if array.size(cand_side) == 0
+    // no candidates available
+    selected_side = "NONE"
+    selected_ticker = ""
+    selected_strike_val = na
+    final_score_out = 0.0
+else
+    // ---------------------------
+    // normalize IV per side (pool min/max) for IV attractiveness
+    // ---------------------------
+    // gather per-side IV min/max
+    put_iv_vals = array.new_float()
+    call_iv_vals = array.new_float()
+    for i = 0 to array.size(cand_side) - 1
+        s = array.get(cand_side, i)
+        v = array.get(cand_iv, i)
+        if not na(v)
+            if s == "PUT"
+                array.push(put_iv_vals, v)
+            else
+                array.push(call_iv_vals, v)
+
+    pool_put_min = arr_min(put_iv_vals)
+    pool_put_max = arr_max(put_iv_vals)
+    pool_call_min = arr_min(call_iv_vals)
+    pool_call_max = arr_max(call_iv_vals)
+
+    // helper mapping: clip and safe denom
+    norm_range(x, lo, hi) =>
+        denom = (hi - lo)
+        denom := math.abs(denom) < 1e-9 ? 1e-9 : denom
+        (x - lo) / denom
+
+    // scoring arrays
+    var float[] cand_score = array.new_float()
+    var float[] cand_ivscore = array.new_float()
+    var float[] cand_skscore = array.new_float()
+    var float[] cand_delscore = array.new_float()
+    var float[] cand_vegscore = array.new_float()
+    var float[] cand_thscore = array.new_float()
+    var float[] cand_ctxscore = array.new_float()
+    var float[] cand_mbscore = array.new_float()
+
+    array.clear(cand_score)
+    array.clear(cand_ivscore)
+    array.clear(cand_skscore)
+    array.clear(cand_delscore)
+    array.clear(cand_vegscore)
+    array.clear(cand_thscore)
+    array.clear(cand_ctxscore)
+    array.clear(cand_mbscore)
+
+    // determine short-term spot bias (VWAP simple)
+    // compute intraday VWAP on chart timeframe
+    vwap_series = ta.vwap(hlc3)
+    spot_bearish = spot < vwap_series
+    spot_bullish = spot > vwap_series
+
+    // Loop candidates and compute subscores
+    for i = 0 to array.size(cand_side) - 1
+        s = array.get(cand_side, i)
+        ivv = array.get(cand_iv, i)
+        delv = array.get(cand_delta, i)
+        veg = array.get(cand_vega, i)
+        th = array.get(cand_theta, i)
+
+        // default subscores
+        ivs = 0.0
+        sks = 0.5
+        dls = 0.0
+        vgs = 0.5
+        ths = 0.5
+        ctxs = 1.0
+        mbs = 0.5
+
+        // IV Attractiveness (per-side pool)
+        if s == "PUT"
+            if not na(ivv) and not na(pool_put_min) and not na(pool_put_max)
+                ivs := 1.0 - math.max(0.0, math.min(1.0, norm_range(ivv, pool_put_min, pool_put_max)))
+        else
+            if not na(ivv) and not na(pool_call_min) and not na(pool_call_max)
+                ivs := 1.0 - math.max(0.0, math.min(1.0, norm_range(ivv, pool_call_min, pool_call_max)))
+
+        // Skew favorability: compare same-strike other-side IV if available
+        // Attempt to find matching strike on opposite side
+        other_iv = na
+        for j = 0 to array.size(cand_side) - 1
+            if array.get(cand_strike, j) == array.get(cand_strike, i) and array.get(cand_side, j) != s
+                other_iv := array.get(cand_iv, j)
+                break
+
+        baseIV = not na(ivv) and not na(other_iv) ? (math.abs(ivv) + math.abs(other_iv)) / 2.0 : na
+
+        if not na(ivv) and not na(other_iv) and baseIV > 0
+            skew = ( (s == "PUT") ? (ivv - other_iv) : (other_iv - ivv) )  // positive skew means side is more expensive vs other
+            // We favor *cheaper* side for buys → so larger positive skew reduces score.
+            skew_clip = math.max(-0.25, math.min(0.25, skew / baseIV))
+            // Map [-0.25,0.25] -> [1,0] (so higher skew reduces attractiveness)
+            sks := 1.0 - ((skew_clip + 0.25) / 0.5)
+
+        // Delta suitability (absolute delta compared to pref_delta)
+        if not na(delv)
+            dls := math.max(0.0, 1.0 - (math.abs(math.abs(delv) - pref_delta) / delta_window))
+
+        // Vega normalization across candidate side pool
+        // find min/max vega per side quickly by scanning cand_vega values (cheap)
+        // create min/max inline
+        side_vega_min = na
+        side_vega_max = na
+        for k = 0 to array.size(cand_side) - 1
+            if array.get(cand_side, k) == s
+                vv = array.get(cand_vega, k)
+                if not na(vv)
+                    side_vega_min := na(side_vega_min) ? vv : math.min(side_vega_min, vv)
+                    side_vega_max := na(side_vega_max) ? vv : math.max(side_vega_max, vv)
+        if not na(veg) and not na(side_vega_min) and not na(side_vega_max)
+            denom = (side_vega_max - side_vega_min)
+            denom := math.abs(denom) < 1e-9 ? 1e-9 : denom
+            vgs := (veg - side_vega_min) / denom
+
+        // Theta penalty (abs)
+        if not na(th)
+            ths := 1.0 - math.min(1.0, math.abs(th) / theta_threshold)
+
+        // Context score (blockers)
+        // If global ctx_block_buy (computed earlier) is true then block buys generally
+        // But we may allow if iv_contract_flag true
+        if ctx_block_buy
+            ctxs := 0.0
+        else if iv_contract_flag
+            ctxs := 1.0
+        else
+            ctxs := 0.8
+
+        // Momentum / Spot bias score
+        if s == "PUT"
+            mbs := spot_bearish ? 1.0 : 0.25
+        else
+            mbs := spot_bullish ? 1.0 : 0.25
+
+        // final weighted score
+        score = w_iv * ivs + w_sk * sks + w_dl * dls + w_vg * vgs + w_th * ths + w_ctx * ctxs + w_mb * mbs
+        // clamp
+        score := math.max(0.0, math.min(1.0, score))
+
+        array.push(cand_ivscore, ivs)
+        array.push(cand_skscore, sks)
+        array.push(cand_delscore, dls)
+        array.push(cand_vegscore, vgs)
+        array.push(cand_thscore, ths)
+        array.push(cand_ctxscore, ctxs)
+        array.push(cand_mbscore, mbs)
+        array.push(cand_score, score)
+
+    // -------------------------
+    // pick best by side
+    // -------------------------
+    best_put_score = -1.0
+    best_put_idx = -1
+    best_call_score = -1.0
+    best_call_idx = -1
+
+    for i = 0 to array.size(cand_score) - 1
+        sc = array.get(cand_score, i)
+        s = array.get(cand_side, i)
+        if s == "PUT" and sc > best_put_score
+            best_put_score := sc
+            best_put_idx := i
+        if s == "CALL" and sc > best_call_score
+            best_call_score := sc
+            best_call_idx := i
+
+    // normalize and apply side-level blockers
+    best_put_score := best_put_score < 0 ? 0.0 : best_put_score
+    best_call_score := best_call_score < 0 ? 0.0 : best_call_score
+
+    // If global context blocks buys, reduce scores strongly
+    if ctx_block_buy
+        best_put_score := best_put_score * 0.25
+        best_call_score := best_call_score * 0.25
+
+    // Decision logic between sides
+    side_margin = best_put_score - best_call_score
+    final_selected_side = "NONE"
+    final_selected_idx = -1
+    final_selected_score = 0.0
+    reason_list = ""
+
+    // If both scores are below avoid threshold -> NONE
+    if math.max(best_put_score, best_call_score) < avoid_threshold
+        final_selected_side := "NONE"
+        reason_list := "No candidate above avoid threshold"
+    else
+        // tie handling
+        if math.abs(side_margin) <= tie_threshold
+            // tie-breaker: spot bias preference
+            if spot_bearish and best_put_score >= best_call_score
+                final_selected_side := "PUT"
+                final_selected_idx := best_put_idx
+            else if spot_bullish and best_call_score > best_put_score
+                final_selected_side := "CALL"
+                final_selected_idx := best_call_idx
+            else
+                // prefer higher ctxscore
+                p_ctx = best_put_idx >= 0 ? array.get(cand_ctxscore, best_put_idx) : 0
+                c_ctx = best_call_idx >= 0 ? array.get(cand_ctxscore, best_call_idx) : 0
+                if p_ctx > c_ctx and best_put_score >= wait_threshold
+                    final_selected_side := "PUT"
+                    final_selected_idx := best_put_idx
+                else if c_ctx > p_ctx and best_call_score >= wait_threshold
+                    final_selected_side := "CALL"
+                    final_selected_idx := best_call_idx
+                else
+                    final_selected_side := "NONE"
+                    reason_list := "Tie unresolved"
+        else
+            if side_margin > 0 and best_put_score >= buy_threshold
+                final_selected_side := "PUT"
+                final_selected_idx := best_put_idx
+            else if side_margin < 0 and best_call_score >= buy_threshold
+                final_selected_side := "CALL"
+                final_selected_idx := best_call_idx
+            else
+                // no side meets buy threshold -> WAIT or NONE
+                if best_put_score >= wait_threshold and best_put_score > best_call_score
+                    final_selected_side := "PUT"
+                    final_selected_idx := best_put_idx
+                else if best_call_score >= wait_threshold and best_call_score > best_put_score
+                    final_selected_side := "CALL"
+                    final_selected_idx := best_call_idx
+                else
+                    final_selected_side := "NONE"
+                    reason_list := "No side meets buy/wait thresholds"
+
+    // Build final outputs
+    if final_selected_idx >= 0
+        final_selected_score := array.get(cand_score, final_selected_idx)
+        final_side = final_selected_side
+        sel_strike = array.get(cand_strike, final_selected_idx)
+        // build ticker using your generator
+        sel_ticker = get_option_ticker(sel_strike, final_side == "CALL")
+        // gather subscores
+        sub_iv  = array.get(cand_ivscore, final_selected_idx)
+        sub_sk  = array.get(cand_skscore, final_selected_idx)
+        sub_dl  = array.get(cand_delscore, final_selected_idx)
+        sub_vg  = array.get(cand_vegscore, final_selected_idx)
+        sub_th  = array.get(cand_thscore, final_selected_idx)
+        sub_ctx = array.get(cand_ctxscore, final_selected_idx)
+        sub_mb  = array.get(cand_mbscore, final_selected_idx)
+
+        reason_list := "Selected " + final_side + " " + str.tostring(sel_strike) + " score=" + str.tostring(final_selected_score, "#.00")
+    else
+        final_side = "NONE"
+        sel_strike = na
+        sel_ticker = ""
+        final_selected_score := 0.0
+
+    // On last bar show a compact label
+    if barstate.islast
+        lbl = "HeartPick: " + final_side + "\n" +
+              "Strike: " + (final_side == "NONE" ? "NA" : str.tostring(sel_strike)) + "\n" +
+              "Score: " + str.tostring(final_selected_score, "#.00") + "\n" +
+              "IVrank: " + str.tostring(atm_iv_rank * 100, "#.0") + "%  VIXr: " + str.tostring(vix_rank * 1, "#.0") + "%\n" +
+              "Subscores (IV,Sk,Delta,Vega,Theta,Ctx,MB):\n" +
+              (final_side == "NONE" ? "NA" : str.tostring(sub_iv, "#.00") + "," + str.tostring(sub_sk, "#.00") + "," + str.tostring(sub_dl, "#.00") + "," + str.tostring(sub_vg, "#.00") + "," + str.tostring(sub_th, "#.00") + "," + str.tostring(sub_ctx, "#.00") + "," + str.tostring(sub_mb, "#.00")) + "\n" +
+              "Reasons: " + reason_list
+
+        label.new(bar_index, high, lbl, style = label.style_label_left, color = final_side == "PUT" ? color.new(color.red, 40) : final_side == "CALL" ? color.new(color.green, 40) : color.new(color.gray, 80), textcolor=color.white, size=size.small)
+
+    // expose outputs as globals (you can use these later)
+    selected_side = final_side
+    selected_strike_val = sel_strike
+    selected_ticker = sel_ticker
+    final_score_out = final_selected_score
+    selected_subscores = [sub_iv, sub_sk, sub_dl, sub_vg, sub_th, sub_ctx, sub_mb]  // pseudo; use as needed
