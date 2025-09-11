@@ -2,6 +2,32 @@
 indicator('SENSEX Option IV + Greeks + Recommended Strike Table', overlay=true, max_lines_count=500, max_labels_count=500)
 
 // -----------------------------------------------------
+//atm_below_n_above_strikes = otm_strike_put_list
+// -----------------------------------------------------
+// Arrays for data
+new_arr() => array.new_float()
+var call_ivs   = new_arr()
+var put_ivs    = new_arr()
+var call_delta = new_arr()
+var put_delta  = new_arr()
+var call_gamma = new_arr()
+var put_gamma  = new_arr()
+var call_vega  = new_arr()
+var put_vega   = new_arr()
+var call_theta = new_arr()
+var put_theta  = new_arr()
+
+// Clear arrays at the beginning of each bar or calculation cycle
+array.clear(call_ivs)
+array.clear(put_ivs)
+array.clear(call_delta)
+array.clear(put_delta)
+array.clear(call_gamma)
+array.clear(put_gamma)
+array.clear(call_vega)
+array.clear(put_vega)
+array.clear(call_theta)
+array.clear(put_theta)
 
 lookback = input.int(252, "IV Rank Lookback")
 gap_threshold = 0.2
@@ -26,6 +52,39 @@ parse_expiry(expiry) =>
     dte = math.max(1, (expiry_time - time) / ms_in_day)
     T = dte / 365
     [T, dte]
+
+// -----------------------------------------------------
+// Derive option ticker
+get_option_ticker(strike_val, is_call_val) =>
+    strike_str_val = str.tostring(strike_val)
+    base_sym   = str.substring(syminfo.ticker,0,3)
+    expiry_str = str.substring(syminfo.ticker,3,9)
+    type_str   = is_call_val ? "C" : "P"
+    y = str.substring(expiry_str, 0, 2)
+    m = str.substring(expiry_str, 2, 4)
+    d = str.length(expiry_str) >= 6 ? str.substring(expiry_str, 4, 6) : '01'
+    //var array<string> call_strikes_array = array.new_string()
+    year_full = 2000 + math.floor(str.tonumber(y))
+    expiry_time = timestamp(year_full, math.floor(str.tonumber(m)), math.floor(str.tonumber(d)), 15, 30)
+    ms_in_day = 1000 * 60 * 60 * 24
+    dte = math.max(1, (expiry_time - time) / ms_in_day)
+    T = dte / 365
+    [base_sym + expiry_str + type_str + strike_str_val, T]
+
+// -----------------------------------------------------
+get_atm_striks(is_call)=>
+    var array<float> otm_strikes = array.new_float()
+    array.clear(otm_strikes)
+    if is_call
+        k = 4
+        for i = 1 to 4
+            strike_dn = rounded_spot - (k -i)*100
+            array.push(otm_strikes, strike_dn)
+    else
+        for i = 1 to 4
+            strike_up = rounded_spot + i*100
+            array.push(otm_strikes, strike_up)
+    otm_strikes
 
 // -----------------------------------------------------
 // Black-Scholes helper functions
@@ -94,101 +153,27 @@ bisection_iv(market_price,S,K,T,r,q,call_option) =>
         mid
 
 // -----------------------------------------------------
-// Derive option ticker
-get_option_ticker(strike_val, is_call_val) =>
-    strike_str_val = str.tostring(strike_val)
-    base_sym   = str.substring(syminfo.ticker,0,3)
-    expiry_str = str.substring(syminfo.ticker,3,9)
-    type_str   = is_call_val ? "C" : "P"
-    y = str.substring(expiry_str, 0, 2)
-    m = str.substring(expiry_str, 2, 4)
-    d = str.length(expiry_str) >= 6 ? str.substring(expiry_str, 4, 6) : '01'
-    //var array<string> call_strikes_array = array.new_string()
-    year_full = 2000 + math.floor(str.tonumber(y))
-    expiry_time = timestamp(year_full, math.floor(str.tonumber(m)), math.floor(str.tonumber(d)), 15, 30)
-    ms_in_day = 1000 * 60 * 60 * 24
-    dte = math.max(1, (expiry_time - time) / ms_in_day)
-    T = dte / 365
-    [base_sym + expiry_str + type_str + strike_str_val, T]
-
-// -----------------------------------------------------
-// Strikes
-
-// var array<float> otm_strike_put_list = array.new_float()
-// var array<float> otm_strike_call_list = array.new_float()
-
-// array.clear(otm_strike_put_list)
-// array.clear(otm_strike_call_list)
-
-
-// for i = 1 to 4
-//     strike_up = rounded_spot + i*100
-//     strike_dn = rounded_spot - i*100
-//     array.push(otm_strike_call_list, strike_up)
-//     array.push(otm_strike_put_list, strike_dn)
-
-get_atm_striks(is_call)=>
-    var array<float> otm_strikes = array.new_float()
-    array.clear(otm_strikes)
-    if is_call
-        for i = 1 to 4
-            strike_dn = rounded_spot - i*100
-            array.push(otm_strikes, strike_dn)
-    else
-        for i = 1 to 4
-            strike_up = rounded_spot + i*100
-            array.push(otm_strikes, strike_up)
-    otm_strikes
-
-//atm_below_n_above_strikes = otm_strike_put_list
-// -----------------------------------------------------
-// Arrays for data
-new_arr() => array.new_float()
-var call_ivs   = new_arr()
-var put_ivs    = new_arr()
-var call_delta = new_arr()
-var put_delta  = new_arr()
-var call_gamma = new_arr()
-var put_gamma  = new_arr()
-var call_vega  = new_arr()
-var put_vega   = new_arr()
-var call_theta = new_arr()
-var put_theta  = new_arr()
-
-// Clear arrays at the beginning of each bar or calculation cycle
-array.clear(call_ivs)
-array.clear(put_ivs)
-array.clear(call_delta)
-array.clear(put_delta)
-array.clear(call_gamma)
-array.clear(put_gamma)
-array.clear(call_vega)
-array.clear(put_vega)
-array.clear(call_theta)
-array.clear(put_theta)
-
-// -----------------------------------------------------
 // Fill Greeks + IV
 calc_ivs_for_strikes(bool is_call, float[] iv_arr, float[] delta_arr, float[] gamma_arr, float[] vega_arr, float[] theta_arr ) =>
     strike_arr = get_atm_striks(is_call)
+    //parse_expiry()
     for i = 0 to array.size(strike_arr) - 1
-        strike_temp = array.get(strike_arr, i)
-        [opt_ticker, T] = get_option_ticker(strike_temp, is_call)
-        opt_price = request.security(opt_ticker,"3",close)
-        //strike_str_val = str.tostring(strike_temp)
+        otm_strike = array.get(strike_arr, i)
+        [opt_ticker, T] = get_option_ticker(otm_strike, is_call)
         // Request price and calculate implied vol
-        //T = 1 / 123
+        otm_price = request.security(opt_ticker,"3",close)
 
-        iv_temp = bisection_iv(opt_price, spot, strike_temp, T, rf_rate, div_yield, is_call)
-        opt_delta = delta(spot, strike_temp, T, rf_rate, div_yield, iv_temp, is_call)
-        callGamma = gamma(spot, strike_temp, T, rf_rate, div_yield, iv_temp)
-        callVega  = vega(spot, strike_temp, T, rf_rate, div_yield, iv_temp)
-        callTheta = theta(spot, strike_temp, T, rf_rate, div_yield, iv_temp, is_call)
-        array.push(iv_arr, iv_temp)
-        array.push(delta_arr, opt_delta)
-        array.push(gamma_arr, callGamma)
-        array.push(vega_arr, callVega)
-        array.push(theta_arr, callTheta)
+        otm_iv_val = bisection_iv(otm_price, spot, otm_strike, T, rf_rate, div_yield, is_call)
+        otm_delta_val = delta(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val, is_call)
+        otm_gamma_val = gamma(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val)
+        otm_vega_val  = vega(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val)
+        otm_theta_val = theta(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val, is_call)
+
+        array.push(iv_arr, otm_iv_val)
+        array.push(delta_arr, otm_delta_val)
+        array.push(gamma_arr, otm_gamma_val)
+        array.push(vega_arr, otm_vega_val)
+        array.push(theta_arr, otm_theta_val)
 
 // ----------------------main
 
@@ -201,12 +186,23 @@ calc_ivs_for_strikes(bool is_call, float[] iv_arr, float[] delta_arr, float[] ga
 [atm_call_symbol, T_] = get_option_ticker(rounded_spot,true)
 
 // Get option prices for current strike
-option_call_price = request.security(atm_call_symbol, "3", close)
-option_put_price = request.security(atm_put_symbol, "3", close)
+atm_call_price = request.security(atm_call_symbol, "3", close)
+atm_put_price = request.security(atm_put_symbol, "3", close)
 
 
-atm_put_iv = bisection_iv(option_put_price, spot, rounded_spot, T_, rf_rate, div_yield, false)
-atm_call_iv = bisection_iv(option_call_price, spot, rounded_spot, T_, rf_rate, div_yield, true)
+atm_call_iv = bisection_iv(atm_call_price, spot, rounded_spot, T_, rf_rate, div_yield, true)
+atm_call_delta = delta(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv, true)
+atm_call_Gamma = gamma(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv)
+atm_call_Vega  = vega(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv)
+atm_call_theta = theta(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv, true)
+
+
+atm_put_iv = bisection_iv(atm_put_price, spot, rounded_spot, T_, rf_rate, div_yield, false)
+atm_put_delta = delta(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv, false)
+atm_put_Gamma = gamma(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv)
+atm_put_Vega  = vega(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv)
+atm_put_theta = theta(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv, false)
+
 
 
 // iv and greek compute
@@ -239,12 +235,12 @@ select_trade_strike() =>
 [strike_rec, side_rec] =  select_trade_strike()
 
 // --- greek/iv chain Table Display logic
+call_otm_strike_arr = get_atm_striks(true)
+put_otm_strike_arr = get_atm_striks(false)
 
 var table option_table = table.new(position.top_right, 13, 10, border_width=1)
 if barstate.islast and 1==1 //table display on/off
     //
-    call_otm_strike_arr = get_atm_striks(true)
-    put_otm_strike_arr = get_atm_striks(false)
 
     // Step 1: Union of call and put strikes
     strike_arr = array.new_float()
@@ -254,23 +250,26 @@ if barstate.islast and 1==1 //table display on/off
         strike = array.get(call_otm_strike_arr, i)
         array.push(strike_arr, strike)
 
+
     // Add put strikes if not already present
     for i = 0 to array.size(put_otm_strike_arr) - 1
         strike = array.get(put_otm_strike_arr, i)
         if not array.includes(strike_arr, strike)
             array.push(strike_arr, strike)
 
+
+
     // Step 2: Map greeks aligned with strike_arr
-    call_gamma_filtered = array.new_float()
-    call_vega_filtered  = array.new_float()
-    call_theta_filtered = array.new_float()
-    call_delta_filtered = array.new_float()
-    call_ivs_filtered   = array.new_float()
-    put_gamma_filtered = array.from(0.0, 0, 0, 0)
-    put_vega_filtered  = array.from(0.0, 0, 0, 0)
-    put_theta_filtered = array.from(0.0, 0, 0, 0)
-    put_delta_filtered = array.from(0.0, 0, 0, 0)
-    put_ivs_filtered   = array.from(0.0, 0, 0, 0)
+    call_gamma_filtered = array.from(0.0, 0, 0, 0)
+    call_vega_filtered  = array.from(0.0, 0, 0, 0)
+    call_theta_filtered = array.from(0.0, 0, 0, 0)
+    call_delta_filtered = array.from(0.0, 0, 0, 0)
+    call_ivs_filtered   = array.from(0.0, 0, 0, 0)
+    put_gamma_filtered = array.new_float()
+    put_vega_filtered  = array.new_float()
+    put_theta_filtered = array.new_float()
+    put_delta_filtered = array.new_float()
+    put_ivs_filtered   = array.new_float()
 
     for i = 0 to 3
         array.push(put_gamma_filtered, array.get(put_gamma, i))
@@ -284,11 +283,11 @@ if barstate.islast and 1==1 //table display on/off
         array.push(call_delta_filtered, array.get(call_delta, i))
         array.push(call_ivs_filtered,   array.get(call_ivs, i))
     for i = 0 to 3
-        call_gamma_filtered.push(0.0)
-        call_vega_filtered.push(0.0)
-        call_theta_filtered.push(0.0)
-        call_delta_filtered.push(0.0)
-        call_ivs_filtered.push(0.0)
+        put_gamma_filtered.push(0.0)
+        put_vega_filtered.push(0.0)
+        put_theta_filtered.push(0.0)
+        put_delta_filtered.push(0.0)
+        put_ivs_filtered.push(0.0)
 
     table.cell(option_table, 0, 0, "Gamma Call", text_color=color.white, bgcolor=color.blue)
     table.cell(option_table, 1, 0, "Vega Call", text_color=color.white, bgcolor=color.rgb(16, 92, 154))
@@ -304,8 +303,8 @@ if barstate.islast and 1==1 //table display on/off
 
     for i=0 to array.size(strike_arr)-1
         strike = array.get(strike_arr,i)
-        call_iv = array.get(call_ivs_filtered,i)
-        put_iv  = array.get(put_ivs_filtered,i)
+        call_iv = array.get(call_ivs_filtered,i)*100
+        put_iv  = array.get(put_ivs_filtered,i)*100
         call_delta_val = array.get(call_delta_filtered,i)
         put_delta_val = array.get(put_delta_filtered,i)
         call_gamma_val = array.get(call_gamma_filtered,i)
@@ -318,21 +317,21 @@ if barstate.islast and 1==1 //table display on/off
         [strike_id, _] = get_option_ticker(strike, true)
 
         row_bg = strike == strike_rec ? color.new(color.green, 80) : na
-        table.cell(option_table,0,i+1,str.tostring(call_gamma_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,1,i+1,str.tostring(call_vega_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,2,i+1,str.tostring(call_theta_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,3,i+1,str.tostring(call_delta_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,4,i+1,str.tostring(call_iv,'#.###'),
+        table.cell(option_table,0,i+1,str.tostring(call_gamma_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,1,i+1,str.tostring(call_vega_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,2,i+1,str.tostring(call_theta_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,3,i+1,str.tostring(call_delta_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,4,i+1,str.tostring(call_iv,'#.##'),
                    bgcolor=(strike==strike_rec and side_rec=="CALL") ? color.green : na)
         //table.cell(option_table,7,i+1,str.tostring(strike), bgcolor=row_bg)
        // table.cell(option_table,8,i+1,str.tostring(call_iv_val,'#.###'), bgcolor=row_bg)
         table.cell(option_table,5,i+1,str.tostring(strike),   text_color=color.white, bgcolor=color.gray)
-        table.cell(option_table,6,i+1,str.tostring(put_iv,'#.###'),
+        table.cell(option_table,6,i+1,str.tostring(put_iv,'#.##'),
                    bgcolor=(strike==strike_rec and side_rec=="PUT") ? color.green : na)
-        table.cell(option_table,7,i+1,str.tostring(put_delta_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,8,i+1,str.tostring(put_theta_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,9,i+1,str.tostring(put_vega_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,10,i+1,str.tostring(put_gamma_val,'#.###'), bgcolor=row_bg)
+        table.cell(option_table,7,i+1,str.tostring(put_delta_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,8,i+1,str.tostring(put_theta_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,9,i+1,str.tostring(put_vega_val,'#.##'), bgcolor=row_bg)
+        table.cell(option_table,10,i+1,str.tostring(put_gamma_val,'#.##'), bgcolor=row_bg)
 
 
 
@@ -409,7 +408,7 @@ compute_skew_metrics(call_ivs, put_ivs, atm_call_iv, atm_put_iv) =>
 
 
 
-[rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal] = compute_skew_metrics(call_ivs, call_ivs, atm_call_iv, atm_put_iv)
+[rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal] = compute_skew_metrics(call_ivs, put_ivs, atm_call_iv, atm_put_iv)
 
 // Expert-level interpretation function for skew metrics
 get_skew_matrix_interpretations(call_relative_skew, put_relative_skew, put_call_skew,skew_slope, skew_25_delta, asymmetry, risk_reversal) =>
@@ -529,3 +528,67 @@ signal := signal and (sensex_daily_hv > ta.sma(sensex_daily_hv, 10))
 
 // Generate final directional signal
 direction = signal ? (iv_diff_call_put > 0 ? "buy Call" : "buy PUT") : "No Signal"
+
+// New function: select_strike_with_delta_scoring
+// Inputs:
+//   strikes_arr – array of strikes (OTM strikes for the direction side)
+//   ivs_arr – array of IVs for those strikes
+//   deltas_arr – array of deltas for those strikes
+//   atm_iv – IV of the ATM option
+//   direction – "buy Call" or "buy PUT"
+//   target_delta – float, desired delta magnitude (e.g. 0.25)
+//   iv_rank_func (optional) – a function you might use to weight IV vs historical IV
+
+select_strike_with_delta_scoring(strikes_arr, ivs_arr, deltas_arr, atm_iv, direction, target_delta) =>
+    var float best_score = -1.0
+    var float selected_strike = na
+    var float selected_iv = na
+    var float selected_delta = na
+
+    for i = 0 to array.size(strikes_arr) - 1
+        strike_i = array.get(strikes_arr, i)
+        iv_i     = array.get(ivs_arr, i)
+        delta_i  = array.get(deltas_arr, i)
+
+        // Only consider strikes on the correct side of spot
+        if (direction == "buy Call" and strike_i > spot) or
+           (direction == "buy PUT" and strike_i < spot)
+
+            // Delta‐band filtering: ensure delta magnitude is near target
+            delta_diff = math.abs(math.abs(delta_i) - target_delta)
+
+            // Score components:
+
+            // A. Delta proximity score (lower is better)
+            //     you want delta close to target_delta
+            delta_score = 1.0 / (1.0 + delta_diff * 10)
+            // factor 10 just scales how heavily delta_diff affects score
+
+            // B. IV premium over ATM (how much richer this strike's IV is vs ATM)
+            iv_premium = iv_i - atm_iv
+
+            iv_score = iv_premium > 0 ? iv_premium : 0
+
+            // C. (Optional) Strike IV rank or skew contribution
+            //    you can weight the raw IV or relative skew here if available
+
+            // Total score (weights you can adjust)
+            score = delta_score * 0.5 + iv_score * 0.3
+
+            // If this score beats current best, choose this one
+            if score > best_score
+                best_score := score
+                selected_strike := strike_i
+                selected_iv := iv_i
+                selected_delta := delta_i
+
+    [selected_strike, selected_iv, selected_delta]
+
+//[target_strike, target_strike_iv, target_strike_delta] =
+// strikes_arr, ivs_arr, deltas_arr, atm_iv, direction, target_delta
+
+[target_strike, target_strike_iv, target_strike_delta]=select_strike_with_delta_scoring( strikes_arr = direction == "buy Call" ? call_otm_strike_arr : put_otm_strike_arr, ivs_arr= direction == "buy Call" ? call_ivs : put_ivs, deltas_arr=direction == "buy Call" ? call_delta : put_delta, atm_iv=direction=="buy Call"? atm_call_iv:atm_put_iv, direction=direction, target_delta = 0.25  )
+
+if barstate.islast
+    text_fun = "Trade: " + direction + "\nStrike: " + str.tostring(target_strike) +"\nIV: " + str.tostring(target_strike_iv, "#.###") +"\nDelta: " + str.tostring(target_strike_delta, "#.###"),
+    label.new(bar_index, high,  text = text_fun, style = label.style_label_up, color = color.green, size=size.large)
