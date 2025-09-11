@@ -474,3 +474,58 @@ if barstate.islast
     table.cell(skew_table, 1, 7, format_pct(risk_reversal),bgcolor = color.rgb(226, 221, 249))
     for i = 0 to 6
         table.cell(skew_table, 2, i + 1, array.get(interp_arr, i), text_size=size.normal, bgcolor=color.new(color.gray, 90))
+
+// -- for finding direction ( PUT or CALL)
+// 1. ATM IV Rank for put_iv series (pass your own put_iv series here)
+atm_rank(put_iv, lookback) =>
+    iv_min = ta.lowest(put_iv, lookback)
+    iv_max = ta.highest(put_iv, lookback)
+    iv_range_safe = math.abs(iv_max - iv_min) > 1e-9
+    iv_rank = iv_range_safe ? (put_iv - iv_min) / (iv_max - iv_min) : 0.0
+    iv_rank
+
+// 2. VIX IV Rank and Historical Volatility + Vol-of-Vol
+vix_iv_rank_and_vol_of_vol(vix_live, vix_daily_close) =>
+    vix_daily_log_return = math.log(vix_daily_close / vix_daily_close[1])
+    vix_daily_hv = ta.stdev(vix_daily_log_return, 35) * 100
+    vix_weekly_hv = vix_daily_hv * math.sqrt(5)
+
+    vix_iv_low  = ta.lowest(vix_daily_close, 252)
+    vix_iv_high = ta.highest(vix_daily_close, 252)
+
+    vix_iv_rank = vix_iv_high != vix_iv_low ?100 * (vix_live - vix_iv_low) / (vix_iv_high - vix_iv_low) : 0
+    vix_iv_rank_normalized = vix_iv_rank / 100.0
+
+    // Calculate vol-of-vol (HV of VIX daily log returns)
+    vix_vol_of_vol = ta.stdev(vix_daily_log_return, 35) * 100
+
+    [vix_iv_rank, vix_iv_rank_normalized, vix_daily_hv, vix_weekly_hv, vix_vol_of_vol]
+
+// 3. Sensex Historical Volatility
+sensex_vol(daily_close) =>
+    daily_log_return = math.log(daily_close / daily_close[1])
+    daily_hv = ta.stdev(daily_log_return, 35) * 100
+    weekly_hv = daily_hv * math.sqrt(5)
+    [daily_hv, weekly_hv]
+
+
+threshold_base = 0.05
+threshold = threshold_base
+
+[vix_iv_rank, vix_iv_rank_normalized,_,_,vix_vol_of_vol]= vix_iv_rank_and_vol_of_vol(vix_live , vix_live )
+[sensex_daily_hv, _] = sensex_vol(spot)
+
+iv_diff_call_put = array.avg(call_ivs) - array.avg(put_ivs)
+greeks_delta_diff = array.avg(call_delta) - array.avg(put_delta)
+
+// Confirm IV signal only if delta difference confirms
+signal = (iv_diff_call_put > threshold) and (greeks_delta_diff > 0.1)
+
+// Further confirm with vol-of-vol trend
+signal := signal and (vix_vol_of_vol > ta.sma(vix_vol_of_vol, 10))
+
+// Confirm with Sensex HV
+signal := signal and (sensex_daily_hv > ta.sma(sensex_daily_hv, 10))
+
+// Generate final directional signal
+direction = signal ? (iv_diff_call_put > 0 ? "buy Call" : "buy PUT") : "No Signal"
