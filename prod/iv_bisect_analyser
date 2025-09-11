@@ -241,7 +241,7 @@ select_trade_strike() =>
 // --- greek/iv chain Table Display logic
 
 var table option_table = table.new(position.top_right, 13, 10, border_width=1)
-if barstate.islast and 1==2 //table display on/off
+if barstate.islast and 1==1 //table display on/off
     //
     call_otm_strike_arr = get_atm_striks(true)
     put_otm_strike_arr = get_atm_striks(false)
@@ -407,30 +407,29 @@ compute_skew_metrics(call_ivs, put_ivs, atm_call_iv, atm_put_iv) =>
 
     [rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal]
 
-// -----------------
-// Example usage:
-
-// Assuming you have arrays: call_ivs, put_ivs, and atm IVs and strikes defined somewhere
-// Example dummy arrays (replace with your real data)
-
-
-// atm_put_iv = bisection_iv(option_put_price, spot, rounded_spot, T_, rf_rate, div_yield, false)
-// atm_call_iv = bisection_iv(option_call_price, spot, rounded_spot, T_, rf_rate, div_yield, true)
-
-
-// // iv and greek compute
-// calc_ivs_for_strikes(otm_strike_call_list, true, call_ivs, call_delta, call_gamma, call_vega, call_theta)
-// calc_ivs_for_strikes(otm_strike_put_list, false, put_ivs, put_delta, put_gamma, put_vega, put_theta)
 
 
 [rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal] = compute_skew_metrics(call_ivs, call_ivs, atm_call_iv, atm_put_iv)
 
-// Plot for demo
-plot(rel_call_skew, color=color.green, title="Relative Call Skew")
-plot(rel_put_skew, color=color.red, title="Relative Put Skew")
-plot(put_call_skew, color=color.blue, title="Put-Call Skew")
-plot(skew_slope, color=color.orange, title="Skew Slope")
-plot(skew_25delta, color=color.purple, title="25Δ Skew")
-plot(smile_asymmetry, color=color.teal, title="Smile Asymmetry")
-plot(risk_reversal, color=color.fuchsia, title="Risk Reversal")
 
+
+format_pct(x) => str.tostring(x * 100, "#.##") + "%"
+if barstate.islast
+    var table skew_table = table.new(position.bottom_right, 2, 8, border_width=1)
+
+    table.cell(skew_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    table.cell(skew_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    table.cell(skew_table, 0, 1, "Call Relative Skew",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 1, format_pct(rel_call_skew),bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 0, 2, "Put Relative Skew",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 2, format_pct(rel_put_skew),bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 0, 3, "Put-Call Skew",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 3, format_pct(put_call_skew),bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 0, 4, "Skew Slope",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 4, str.tostring(skew_slope, "#.###"),bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 0, 5, "25Δ Skew",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 5, format_pct(skew_25delta),bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 0, 6, "Asymmetry",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 6, format_pct(smile_asymmetry),bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 0, 7, "Risk Reversal",bgcolor = color.rgb(226, 221, 249))
+    table.cell(skew_table, 1, 7, format_pct(risk_reversal),bgcolor = color.rgb(226, 221, 249))
