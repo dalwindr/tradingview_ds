@@ -411,14 +411,53 @@ compute_skew_metrics(call_ivs, put_ivs, atm_call_iv, atm_put_iv) =>
 
 [rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal] = compute_skew_metrics(call_ivs, call_ivs, atm_call_iv, atm_put_iv)
 
+// Expert-level interpretation function for skew metrics
+get_skew_matrix_interpretations(call_relative_skew, put_relative_skew, put_call_skew,skew_slope, skew_25_delta, asymmetry, risk_reversal) =>
+
+    var string[] interpretations = array.new_string()
+    array.clear(interpretations)
+
+    // Call Relative Skew
+    call_interp = call_relative_skew > 0.005 ? "OTM Calls exhibit elevated IV: potential bullish market sentiment or demand for upside protection." :call_relative_skew < -0.005 ?"OTM Calls cheaper than ATM: implies subdued upside risk or possible bearish bias." :"Call IV near ATM levels: neutral upside risk pricing."
+    array.push(interpretations, call_interp)
+
+    // Put Relative Skew
+    put_interp = put_relative_skew > 0.01 ? "OTM Puts trading at premium IV: heightened downside risk perception or protective demand." :put_relative_skew < 0.002 ?"OTM Puts cheaper than ATM: suggests limited downside concern or bullish undertone." :"Put IV aligned with ATM: balanced downside risk pricing."
+    array.push(interpretations, put_interp)
+
+    // Put-Call Skew
+    pc_interp = put_call_skew > 0.002 ? "Put IV > Call IV: bearish sentiment, investors hedging downside risk." :put_call_skew < -0.002 ?  "Call IV > Put IV: bullish bias or expectations of upside volatility." :"Put-Call IV parity: market views balanced."
+    array.push(interpretations, pc_interp)
+
+    // Skew Slope
+    slope_interp = skew_slope > 0.001 ? "Positive skew slope: IV increases with strike, potential demand for upside protection." :skew_slope < -0.001 ? "Negative skew slope: IV decreases with strike, often linked to downside risk aversion." :"Flat skew slope: no directional skew detected."
+    array.push(interpretations, slope_interp)
+
+    // 25Δ Skew
+    delta25_interp = math.abs(skew_25_delta) > 0.015 ? "Significant 25Δ skew detected, indicating market pricing asymmetry and risk premium for directional moves." : "Minimal 25Δ skew: symmetric risk-neutral distribution assumption holds."
+    array.push(interpretations, delta25_interp)
+
+    // Smile Asymmetry
+    asym_interp = math.abs(asymmetry) > 0.01 ? "Noticeable smile asymmetry: implies skewness in the implied distribution of returns." : "Symmetric smile shape: neutral market expectations on return distribution."
+    array.push(interpretations, asym_interp)
+
+    // Risk Reversal
+    rr_interp = risk_reversal > 0.002 ? "Positive risk reversal: puts priced higher, market hedging against downside risk." :risk_reversal < -0.002 ?  "Negative risk reversal: calls priced higher, market pricing upside volatility." :"Neutral risk reversal: balanced call/put sentiment."
+    array.push(interpretations, rr_interp)
+
+    interpretations
 
 
 format_pct(x) => str.tostring(x * 100, "#.##") + "%"
 if barstate.islast
-    var table skew_table = table.new(position.bottom_right, 2, 8, border_width=1)
+    var table skew_table = table.new(position.bottom_right, 3, 8, border_width=1)
+    var array<string> interp_arr = get_skew_matrix_interpretations(rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal)
+
 
     table.cell(skew_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
     table.cell(skew_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    table.cell(skew_table, 2, 0, "Interpretation", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+
     table.cell(skew_table, 0, 1, "Call Relative Skew",bgcolor = color.rgb(226, 221, 249))
     table.cell(skew_table, 1, 1, format_pct(rel_call_skew),bgcolor = color.rgb(226, 221, 249))
     table.cell(skew_table, 0, 2, "Put Relative Skew",bgcolor = color.rgb(226, 221, 249))
@@ -433,3 +472,5 @@ if barstate.islast
     table.cell(skew_table, 1, 6, format_pct(smile_asymmetry),bgcolor = color.rgb(226, 221, 249))
     table.cell(skew_table, 0, 7, "Risk Reversal",bgcolor = color.rgb(226, 221, 249))
     table.cell(skew_table, 1, 7, format_pct(risk_reversal),bgcolor = color.rgb(226, 221, 249))
+    for i = 0 to 6
+        table.cell(skew_table, 2, i + 1, array.get(interp_arr, i), text_size=size.normal, bgcolor=color.new(color.gray, 90))
