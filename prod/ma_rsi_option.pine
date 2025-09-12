@@ -3,7 +3,14 @@ strategy("RSI+Moving avg-Based Strategy with ATR TP/SL", overlay=false, default_
 non_option_threshold_input = input.float(0.0, "Non option Gap Threshold (%)")
 option_gap_threshold = input.float(3, "option Gap Threshold (%)")
 gap_threshold = (syminfo.type == "option") ? option_gap_threshold : non_option_threshold_input
+
+
 // === -------------------RSI Logic ---------------- ===
+// == atr
+atr_period = input.int(30, "ta period")
+tp_atr_mult   = input.float(4.0, "TP ATR Multiple")
+sl_atr_mult   = input.float(2.5, "SL ATR Multiple")
+
 // === RSI Settings ===
 rsi_tf        = input.timeframe("3", "RSI Timeframe")
 rsi_len       = input.int(70, "RSI Length")
@@ -111,7 +118,7 @@ rsi_exit_signal  = (main_rsi < smooth_rsi)
 
 // === moving average data prep ===
 // Calculate SMA on current timeframe
-[tf_price_data, momentum_ma, momentum_ma_slow, momentum_ma_long] = request.security(syminfo.tickerid, ma_tf, [close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len)])
+[tf_price_data, momentum_ma, momentum_ma_slow, momentum_ma_long, atr] = request.security(syminfo.tickerid, ma_tf, [close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len), ta.atr(atr_period)])
 
 
 // === moving average signal ===
@@ -134,12 +141,9 @@ exit_signal = ma_exit_signal or rsi_exit_signal
 
 
 // === ATR (for TP/SL) ===
-atr = request.security(syminfo.tickerid, ma_tf, ta.atr(14))
 
 // === other input
 option_type = str.contains(syminfo.tickerid, "C") ? "CE" : "PE"
-tp_atr_mult   = input.float(4.0, "TP ATR Multiple")
-sl_atr_mult   = input.float(2.5, "SL ATR Multiple")
 exit_hour     = input.int(14, "Exit Hour", minval=0, maxval=23)
 exit_minute   = input.int(55, "Exit Minute", minval=0, maxval=59)
 debug_mode    = input.bool(false, "Show Debug Info")
