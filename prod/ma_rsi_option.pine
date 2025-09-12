@@ -48,9 +48,7 @@ gap_cooldown_passed() =>
     // Gap calculation
     // Get daily series
     // Get daily values
-    daily_open_series  = request.security(syminfo.tickerid, "D", open)
-    daily_close_series = request.security(syminfo.tickerid, "D", close)
-    daily_time_series  = request.security(syminfo.tickerid, "D", time)
+    [daily_open_series, daily_close_series, daily_time_series] = request.security(syminfo.tickerid, "D", [open, close, time])
 
     // Detect start of new trading day
     is_new_day = ta.change(daily_time_series) != 0
@@ -99,16 +97,20 @@ gap_cooldown_passed() =>
 
     [is_in_cooldown, cooling_duration, gap_pct]
 
+// === GAP COOLING PERIOD ===
+[is_in_cooldown, cooling_duration, gap_pct] = gap_cooldown_passed()
+abs_gap = math.abs(gap_pct)
+is_new_day = dayofmonth != dayofmonth[1]
+
+if is_new_day and abs_gap > gap_threshold
+    label.new(bar_index,high + high * 0.002, syminfo.type + "\n" + "Daily Gap: " + str.tostring(gap_pct, "#.##") + "%\nCools for = " + str.tostring(cooling_duration, "#") + " min",style = label.style_label_left,yloc = gap_pct > 0 ? yloc.abovebar : yloc.belowbar,color =color.new(color.black, 96),textcolor = gap_pct > 0 ?  color.green: color.red,size = size.normal,force_overlay=true)
+
 
 
 // -- rsi data prep
 main_rsi      = request.security(syminfo.tickerid, rsi_tf, ta.rsi(close, rsi_len))
 smooth_rsi    = ta.sma(main_rsi, rsi_ma_len)
-plot(main_rsi)
-plot(smooth_rsi, color = color.green)
-plot(50, color = color.black)
-plot(70, color = color.red)
-plot(30, color = color.green)
+
 
 // -- rsi signal
 rsi_entry_signal = (main_rsi > smooth_rsi) and (main_rsi > rsi_upper)
@@ -118,29 +120,17 @@ rsi_exit_signal  = (main_rsi < smooth_rsi)
 
 // === moving average data prep ===
 // Calculate SMA on current timeframe
-[tf_price_data, momentum_ma, momentum_ma_slow, momentum_ma_long, atr] = request.security(syminfo.tickerid, ma_tf, [close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len), ta.atr(atr_period)])
+[tf_price_data, momentum_ma, momentum_ma_slow, momentum_ma_long, atr, time_val] = request.security(syminfo.tickerid, ma_tf, [close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len), ta.atr(atr_period), time])
 
 
 // === moving average signal ===
 ma_entry_signal = (tf_price_data > momentum_ma_long) and (momentum_ma > momentum_ma_slow) and (momentum_ma_slow > momentum_ma_long)
 ma_exit_signal  = (momentum_ma < momentum_ma_slow)
 
-
-
-// === GAP COOLING PERIOD ===
-[is_in_cooldown, cooling_duration, gap_pct] = gap_cooldown_passed()
-abs_gap = math.abs(gap_pct)
-is_new_day = dayofmonth != dayofmonth[1]
-
-if is_new_day and abs_gap > gap_threshold
-    label.new(bar_index,high + high * 0.002, syminfo.type + "\n" + "Daily Gap: " + str.tostring(gap_pct, "#.##") + "%\nCools for = " + str.tostring(cooling_duration, "#") + " min",style = label.style_label_left,yloc = gap_pct > 0 ? yloc.abovebar : yloc.belowbar,color =color.new(color.black, 96),textcolor = gap_pct > 0 ?  color.green: color.red,size = size.normal,force_overlay=true)
-
 // === Combine Signals ===
 buy_signal = ma_entry_signal and rsi_entry_signal and not is_in_cooldown
 exit_signal = ma_exit_signal or rsi_exit_signal
 
-
-// === ATR (for TP/SL) ===
 
 // === other input
 option_type = str.contains(syminfo.tickerid, "C") ? "CE" : "PE"
@@ -150,8 +140,8 @@ debug_mode    = input.bool(false, "Show Debug Info")
 
 
 // === Time Logic ===
-time_tf = input.timeframe("5", "Trade execute Time Check -  TF")
-time_val = request.security(syminfo.tickerid, time_tf, time)
+//time_tf = input.timeframe("5", "Trade execute Time Check -  TF")
+//time_val = request.security(syminfo.tickerid, time_tf, time)
 hour_tf = hour(time_val)
 minute_tf = minute(time_val)
 is_after_920  = (hour_tf > 9) or (hour_tf == 9 and minute_tf >= 20)
@@ -164,32 +154,21 @@ can_enter = buy_signal and within_trading_window and strategy.opentrades == 0
 var float entry_price = na
 var float tp_price = na
 var float sl_price = na
-// Get array of close prices from lower timeframe
-close_array = request.security_lower_tf(syminfo.tickerid, "", close)
-
-// Get the last close value from that array (most recent lower timeframe close within current bar)
-current_price_lower_tf = array.size(close_array) > 0 ? array.get(close_array, array.size(close_array) - 1) : na
-
-// Fallback to 1-min close if na
-//current_price = na(current_price_lower_tf) ? request.security(syminfo.tickerid, "1", close) : current_price_lower_tf
-current_price = request.security(syminfo.tickerid, ma_tf, close)
-
-
 
 if can_enter and barstate.isconfirmed
     strategy.entry("Long", strategy.long, alert_message=option_type)
     // auto lowest TF close
     // entry_price := request.security(syminfo.tickerid, "1", close)
-    entry_price := current_price
+    entry_price := tf_price_data
     tp_price := entry_price + atr * tp_atr_mult
     sl_price := entry_price - atr * sl_atr_mult
 
-exit_now = strategy.position_size > 0 and (exit_signal or not is_before_eod or current_price >= tp_price or current_price <= sl_price)
+exit_now = strategy.position_size > 0 and (exit_signal or not is_before_eod or tf_price_data >= tp_price or tf_price_data <= sl_price)
 
 if exit_now and barstate.isconfirmed
-    pnl_percent = (current_price - entry_price) / entry_price * 100
-    exit_reason = current_price >= tp_price     ? "Take Profit" :
-              current_price <= sl_price     ? "Stop Loss" :
+    pnl_percent = (tf_price_data - entry_price) / entry_price * 100
+    exit_reason = tf_price_data >= tp_price     ? "Take Profit" :
+              tf_price_data <= sl_price     ? "Stop Loss" :
               exit_signal           ? "Exit" :
                                       "Day End"
     pnl_color = pnl_percent >= 0 ? color.green : color.red
@@ -223,17 +202,11 @@ if exit_now and barstate.isconfirmed
 plot(ta.sma(close, fast_ma_len), color=color.green, title="Fast MA (local)",force_overlay=true)
 plot(ta.sma(close, medium_ma_len), color=color.orange, title="Medium MA (local)", force_overlay=true)
 plot(ta.sma(close, slow_ma_len), color=color.red, title="Slow MA (local)", force_overlay=true)
-
-// plot(momentum_ma, color=color.green, title="Main RSI")
-// plot(momentum_ma_slow, color=color.orange, title="Main RSI MA")
-// plot(momentum_ma_long, color=color.red, title="Child RSI")
-//plot(child_rsi_ma, color=color.red, title="Child RSI MA")
-
-//plot(main_rsi, color=color.blue, title="Main RSI")
-//plot(main_rsi_ma, color=color.orange, title="Main RSI MA")
-//plot(child_rsi, color=color.purple, title="Child RSI")
-//plot(child_rsi_ma, color=color.red, title="Child RSI MA")
-
+plot(main_rsi)
+plot(smooth_rsi, color = color.green)
+plot(50, color = color.black)
+plot(70, color = color.red)
+plot(30, color = color.green)
 // === Debug Plots ===
 plotshape(debug_mode and buy_signal, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small, force_overlay=true)
 plotshape(debug_mode and exit_signal, title="Exit Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, force_overlay=true)
