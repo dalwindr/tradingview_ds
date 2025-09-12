@@ -49,8 +49,8 @@ gap_cooldown_passed() =>
     // Market session timings
     int market_open_hour   = 9
     int market_open_minute = 15
-    int trading_end_hour   = 11
-    int trading_end_minute = 0
+    int trading_end_hour   = 15
+    int trading_end_minute = 30
 
     // Gap calculation
     // Get daily series
@@ -105,7 +105,13 @@ gap_cooldown_passed() =>
     [is_in_cooldown, cooling_duration, gap_pct]
 
 // === GAP COOLING PERIOD ===
+
 [is_in_cooldown, cooling_duration, gap_pct] = gap_cooldown_passed()
+if syminfo.basecurrency != "INR"
+    is_in_cooldown := false
+    cooling_duration :=0
+    gap_pct:=0
+
 abs_gap = math.abs(gap_pct)
 is_new_day = dayofmonth != dayofmonth[1]
 // ✅ print cooling gap at market gap
@@ -160,6 +166,7 @@ is_after_920  = (hour_ > 9) or (hour_ == 9 and minute_ >= 20)
 is_before_eod = (hour_ < exit_hour) or (hour_ == exit_hour and minute_ < exit_minute)
 within_trading_window = is_after_920 and is_before_eod
 //is_eod = (hour_ == exit_hour and minute_ == exit_minute)
+
 
 // ✅=== Enter Trade Logic ===
 var float entry_price = na
