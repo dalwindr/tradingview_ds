@@ -1,146 +1,33 @@
-//@version=6
-indicator('SENSEX Option IV + Greeks + Recommended Strike Table', overlay=true, max_lines_count=500, max_labels_count=500)
+// ----------------------------------------------------- part 1: Black-Scholes
 
-// -----------------------------------------------------
-//atm_below_n_above_strikes = otm_strike_put_list
-// -----------------------------------------------------
-// Arrays for data
-new_arr() => array.new_float()
-var call_ivs   = new_arr()
-var put_ivs    = new_arr()
-var call_delta = new_arr()
-var put_delta  = new_arr()
-var call_gamma = new_arr()
-var put_gamma  = new_arr()
-var call_vega  = new_arr()
-var put_vega   = new_arr()
-var call_theta = new_arr()
-var put_theta  = new_arr()
-call_otm_strike_arr = array.new_float()
-put_otm_strike_arr = array.new_float()
-array.clear(call_otm_strike_arr)
-array.clear(put_otm_strike_arr)
-
-
-// Clear arrays at the beginning of each bar or calculation cycle
-array.clear(call_ivs)
-array.clear(put_ivs)
-array.clear(call_delta)
-array.clear(put_delta)
-array.clear(call_gamma)
-array.clear(put_gamma)
-array.clear(call_vega)
-array.clear(put_vega)
-array.clear(call_theta)
-array.clear(put_theta)
-
-lookback = input.int(252, "IV Rank Lookback")
-gap_threshold = 0.2
-rf_rate = input.float(0.05, 'Risk-Free Rate', step=0.001)
-div_yield = input.float(0.0, 'Dividend Yield', step=0.001)
-
-// -----------------------------------------------------
-// Fetch Spot and VIX
-vix_live = request.security("NSE:INDIAVIX", "3", close)
-spot     = request.security("BSE:SENSEX", "3", close)
-rounded_spot = math.round(spot / 100) * 100
-plot(spot, title="spot_price", display=display.data_window)
-plot(rounded_spot, title="atm_strike", display=display.data_window)
-
-// ----------------
-parse_expiry(expiry) =>
-    y = str.substring(expiry, 0, 2)
-    m = str.substring(expiry, 2, 4)
-    d = str.length(expiry) >= 6 ? str.substring(expiry, 4, 6) : '01'
-    //var array<string> call_strikes_array = array.new_string()
-    year_full = 2000 + math.floor(str.tonumber(y))
-    expiry_time = timestamp(year_full, math.floor(str.tonumber(m)), math.floor(str.tonumber(d)), 15, 30)
-    ms_in_day = 1000 * 60 * 60 * 24
-    dte = math.max(1, (expiry_time - time) / ms_in_day)
-    T = dte / 365
-    [T, dte]
-
-// -----------------------------------------------------
-// Derive option ticker
-get_option_ticker(strike_val, is_call_val) =>
-    strike_str_val = str.tostring(strike_val)
-    base_sym   = str.substring(syminfo.ticker,0,3)
-    expiry_str = str.substring(syminfo.ticker,3,9)
-    type_str   = is_call_val ? "C" : "P"
-    y = str.substring(expiry_str, 0, 2)
-    m = str.substring(expiry_str, 2, 4)
-    d = str.length(expiry_str) >= 6 ? str.substring(expiry_str, 4, 6) : '01'
-    //var array<string> call_strikes_array = array.new_string()
-    year_full = 2000 + math.floor(str.tonumber(y))
-    expiry_time = timestamp(year_full, math.floor(str.tonumber(m)), math.floor(str.tonumber(d)), 15, 30)
-    ms_in_day = 1000 * 60 * 60 * 24
-    dte = math.max(1, (expiry_time - time) / ms_in_day)
-    T = dte / 365
-    [base_sym + expiry_str + type_str + strike_str_val, T]
-
-// -----------------------------------------------------
-get_atm_striks(is_call)=>
-    var array<float> otm_strikes = array.new_float()
-    array.clear(otm_strikes)
-    if is_call
-        k = 4
-        for i = 1 to 4
-            strike_dn = rounded_spot - (k -i)*100
-            array.push(otm_strikes, strike_dn)
-    else
-        for i = 1 to 4
-            strike_up = rounded_spot + i*100
-            array.push(otm_strikes, strike_up)
-    otm_strikes
-
-// -----------------------------------------------------
-// Black-Scholes helper functions
+// CDF for normal distribution
 norm_cdf(x) =>
     k = 1.0 / (1.0 + 0.2316419 * math.abs(x))
     poly = k * (0.319381530 + k * (-0.356563782 + k * (1.781477937 + k * (-1.821255978 + 1.330274429 * k))))
     approx = 1.0 - 0.398942280401 * math.exp(-0.5 * x * x) * poly
     x < 0 ? 1.0 - approx : approx
 
-bs_d1(S,K,T,r,q,sigma) =>
-    (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
-
-bs_price(S, K, T, r, q, sigma, call_option) =>
-    d1 = bs_d1(S,K,T,r,q,sigma)
+// Black-Scholes price
+bs_price(S, float K, T, r, q, sigma, call_option) =>
+    T := math.max(T, 1e-9)  // protect against zero T
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
     N_d1 = norm_cdf(call_option ? d1 : -d1)
     N_d2 = norm_cdf(call_option ? d2 : -d2)
-    call_option ? S * math.exp(-q * T) * N_d1 - K * math.exp(-r * T) * N_d2 :
-                  K * math.exp(-r * T) * N_d2 - S * math.exp(-q * T) * N_d1
+    call_option ? S * math.exp(-q * T) * N_d1 - K * math.exp(-r * T) * N_d2 : K * math.exp(-r * T) * N_d2 - S * math.exp(-q * T) * N_d1
 
-delta(S,K,T,r,q,sigma,call_option) =>
-    d1 = bs_d1(S,K,T,r,q,sigma)
-    call_option ? math.exp(-q*T) * norm_cdf(d1) : -math.exp(-q*T) * norm_cdf(-d1)
+// Black-Scholes d1 for Delta calc
+bs_d1(S, K, T, r, q, sigma) =>
+    T := math.max(T, 1e-9)  // protect against zero T
+    (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
 
-gamma(S,K,T,r,q,sigma) =>
-    d1 = bs_d1(S,K,T,r,q,sigma)
-    norm_pdf = 0.398942280401 * math.exp(-0.5 * d1 * d1)
-    norm_pdf * math.exp(-q*T) / (S * sigma * math.sqrt(T))
+// Delta
+delta(S, K, T, r, q, sigma, call_option) =>
+    d1 = bs_d1(S, K, T, r, q, sigma)
+    call_option ? math.exp(-q * T) * norm_cdf(d1) : -math.exp(-q * T) * norm_cdf(-d1)
 
-vega(S,K,T,r,q,sigma) =>
-    d1 = bs_d1(S,K,T,r,q,sigma)
-    norm_pdf = 0.398942280401 * math.exp(-0.5 * d1 * d1)
-    S * math.exp(-q*T) * norm_pdf * math.sqrt(T)
-
-theta(S,K,T,r,q,sigma,call_option) =>
-    d1 = bs_d1(S,K,T,r,q,sigma)
-    d2 = d1 - sigma*math.sqrt(T)
-    norm_pdf = 0.398942280401 * math.exp(-0.5 * d1*d1)
-    term1 = - (S * norm_pdf * sigma * math.exp(-q*T)) / (2 * math.sqrt(T))
-    if call_option
-        term2 = r*K*math.exp(-r*T)*norm_cdf(d2)
-        term3 = -q*S*math.exp(-q*T)*norm_cdf(d1)
-        term1 - term2 + term3
-    else
-        term2 = r*K*math.exp(-r*T)*norm_cdf(-d2)
-        term3 = -q*S*math.exp(-q*T)*norm_cdf(-d1)
-        term1 + term2 + term3
-
-bisection_iv(market_price,S,K,T,r,q,call_option) =>
+// Bisection to find implied volatility
+bisection_iv(market_price, S, K, T, r, q, call_option) =>
     if market_price <= 0
         0.0
     else
@@ -148,9 +35,9 @@ bisection_iv(market_price,S,K,T,r,q,call_option) =>
         high_ = 5.0
         mid = 0.0
         price = 0.0
-        for i = 0 to 40
-            mid := (low_ + high_)/2
-            price := bs_price(S,K,T,r,q,mid,call_option)
+        for i = 0 to 100 by 1
+            mid := (low_ + high_) / 2
+            price := bs_price(S, K, T, r, q, mid, call_option)
             if math.abs(price - market_price) < 0.0001
                 break
             if price < market_price
@@ -159,523 +46,43 @@ bisection_iv(market_price,S,K,T,r,q,call_option) =>
                 high_ := mid
         mid
 
-// -----------------------------------------------------
-// Fill Greeks + IV
-calc_ivs_for_strikes(bool is_call, float[] iv_arr, float[] delta_arr, float[] gamma_arr, float[] vega_arr, float[] theta_arr ) =>
-    strike_arr = get_atm_striks(is_call)
-    //parse_expiry()
-    for i = 0 to array.size(strike_arr) - 1
-        otm_strike = array.get(strike_arr, i)
-        [opt_ticker, T] = get_option_ticker(otm_strike, is_call)
-        // Request price and calculate implied vol
-        otm_price = request.security(opt_ticker,"3",close)
-
-        otm_iv_val = bisection_iv(otm_price, spot, otm_strike, T, rf_rate, div_yield, is_call)
-        otm_delta_val = delta(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val, is_call)
-        otm_gamma_val = gamma(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val)
-        otm_vega_val  = vega(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val)
-        otm_theta_val = theta(spot, otm_strike, T, rf_rate, div_yield, otm_iv_val, is_call)
-
-        array.push(iv_arr, otm_iv_val)
-        array.push(delta_arr, otm_delta_val)
-        array.push(gamma_arr, otm_gamma_val)
-        array.push(vega_arr, otm_vega_val)
-        array.push(theta_arr, otm_theta_val)
-
-// ----------------------main
-
-// -----------------------------------------------------
-
-// ATM strikes data
-// IV calculations
-
-[atm_put_symbol, _] = get_option_ticker(rounded_spot,false)
-[atm_call_symbol, T_] = get_option_ticker(rounded_spot,true)
-
-// Get option prices for current strike
-atm_call_price = request.security(atm_call_symbol, "3", close)
-atm_put_price = request.security(atm_put_symbol, "3", close)
-
-
-atm_call_iv = bisection_iv(atm_call_price, spot, rounded_spot, T_, rf_rate, div_yield, true)
-atm_call_delta = delta(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv, true)
-atm_call_Gamma = gamma(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv)
-atm_call_Vega  = vega(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv)
-atm_call_theta = theta(spot, rounded_spot, T_, rf_rate, div_yield, atm_call_iv, true)
-
-
-atm_put_iv = bisection_iv(atm_put_price, spot, rounded_spot, T_, rf_rate, div_yield, false)
-atm_put_delta = delta(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv, false)
-atm_put_Gamma = gamma(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv)
-atm_put_Vega  = vega(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv)
-atm_put_theta = theta(spot, rounded_spot, T_, rf_rate, div_yield, atm_put_iv, false)
-
-
-
-// iv and greek compute
-calc_ivs_for_strikes(true, call_ivs, call_delta, call_gamma, call_vega, call_theta)
-calc_ivs_for_strikes(false, put_ivs, put_delta, put_gamma, put_vega, put_theta)
-
-// use function
-
-// --- greek/iv chain Table Display logic
-call_otm_strike_arr := get_atm_striks(true)
-put_otm_strike_arr := get_atm_striks(false)
-
-
-// Helper: Calculate slope of linear regression (IV vs Strike)
-linear_regression_slope(strikes_arr, ivs_arr) =>
-    size = array.size(strikes_arr)
-    mean_x = 0.0
-    mean_y = 0.0
-    for i = 0 to size - 1
-        mean_x += array.get(strikes_arr, i)
-        mean_y += array.get(ivs_arr, i)
-    mean_x /= size
-    mean_y /= size
-
-    cov_xy = 0.0
-    var_x = 0.0
-    for i = 0 to size - 1
-        x = array.get(strikes_arr, i)
-        y = array.get(ivs_arr, i)
-        cov_xy += (x - mean_x) * (y - mean_y)
-        var_x += (x - mean_x) * (x - mean_x)
-    var_x := var_x == 0 ? 1e-10 : var_x  // prevent div by zero
-    cov_xy / var_x
-
-// Main function to compute skewness metrics
-compute_skew_metrics(call_ivs, put_ivs, atm_call_iv, atm_put_iv) =>
-    // Assuming call_ivs, put_ivs, strikes are arrays of OTM strikes & IVs (4 each)
-
-    // 1) Relative Call Skew: Avg(Calls_OTM_IV) - ATM_Call_IV
-    sum_call_iv = 0.0
-    for i=0 to array.size(call_ivs)-1
-        sum_call_iv += array.get(call_ivs, i)
-    rel_call_skew = (sum_call_iv / array.size(call_ivs)) - atm_call_iv
-
-    // 2) Relative Put Skew: Avg(Puts_OTM_IV) - ATM_Put_IV
-    sum_put_iv = 0.0
-    for i=0 to array.size(put_ivs)-1
-        sum_put_iv += array.get(put_ivs, i)
-    rel_put_skew = (sum_put_iv / array.size(put_ivs)) - atm_put_iv
-
-    // 3) Put-Call Skew: Avg(Put_OTM_IV) - Avg(Call_OTM_IV)
-    put_call_skew = (sum_put_iv / array.size(put_ivs)) - (sum_call_iv / array.size(call_ivs))
-
-    // 4) Skew Slope (Linear Regression slope of IV vs Strike)
-    combined_strikes = array.new_float()
-    combined_ivs = array.new_float()
-    for i = 0 to array.size(call_otm_strike_arr) - 1
-        array.push(combined_strikes, array.get(call_otm_strike_arr, i))
-        // Combine strikes and IVs for regression
-        call_iv = array.get(call_ivs, i)
-        put_iv = array.get(put_ivs, i)
-        array.push(combined_ivs, (call_iv + put_iv) / 2)
-
-    skew_slope = linear_regression_slope(combined_strikes, combined_ivs)
-
-    // 5) 25Δ Skew (approximate as difference between 25Δ Put IV and 25Δ Call IV)
-    // Assuming strikes sorted, approximate 25Δ as strikes nearest to ATM ± some offset
-    // For demo, use first OTM strike for each side (more accurate method can be added)
-    iv_25call = array.get(call_ivs, 0)
-    iv_25put = array.get(put_ivs, 0)
-    skew_25delta = iv_25put - iv_25call
-
-    // 6) Smile Asymmetry: Avg Put IV - Avg Call IV (repeated from Put-Call skew here)
-    smile_asymmetry = put_call_skew
-
-    // 7) Risk Reversal: Same as 25Δ skew or put-call skew
-    risk_reversal = skew_25delta
-
-    // 8) Term Skew and Moneyness Skew require multi-expiry and moneyness normalized data - omit here
-
-    [rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal]
-
-
-
-[rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal] = compute_skew_metrics(call_ivs, put_ivs, atm_call_iv, atm_put_iv)
-
-
-// Plot the number so it appears in the Data Window
-plot(rel_call_skew*100, title="Relative Call Skew", display=display.data_window)
-plot(rel_put_skew*100, title="Relative Put Skew", display=display.data_window)
-
-// Plot the number so it appears in the Data Window
-plot(put_call_skew*100, title="put_call_skew", display=display.data_window)
-plot(skew_slope*100, title="skew_slope", display=display.data_window)
-
-// Plot the number so it appears in the Data Window
-plot(skew_25delta*100, title="skew_25delta", display=display.data_window)
-plot(smile_asymmetry*100, title="smile_asymmetryr", display=display.data_window)
-
-// Plot the number so it appears in the Data Window
-plot(risk_reversal*100, title="risk_reversal", display=display.data_window)
-
-// Expert-level interpretation function for skew metrics
-get_skew_matrix_interpretations(call_relative_skew, put_relative_skew, put_call_skew,skew_slope, skew_25_delta, asymmetry, risk_reversal) =>
-
-    var string[] interpretations = array.new_string()
-    array.clear(interpretations)
-
-    // Call Relative Skew
-    call_interp = call_relative_skew > 0.005 ? "OTM Calls exhibit elevated IV: potential bullish market sentiment or demand for upside protection." :call_relative_skew < -0.005 ?"OTM Calls cheaper than ATM: implies subdued upside risk or possible bearish bias." :"Call IV near ATM levels: neutral upside risk pricing."
-    array.push(interpretations, call_interp)
-
-    // Put Relative Skew
-    put_interp = put_relative_skew > 0.01 ? "OTM Puts trading at premium IV: heightened downside risk perception or protective demand." :put_relative_skew < 0.002 ?"OTM Puts cheaper than ATM: suggests limited downside concern or bullish undertone." :"Put IV aligned with ATM: balanced downside risk pricing."
-    array.push(interpretations, put_interp)
-
-    // Put-Call Skew
-    pc_interp = put_call_skew > 0.002 ? "Put IV > Call IV: bearish sentiment, investors hedging downside risk." :put_call_skew < -0.002 ?  "Call IV > Put IV: bullish bias or expectations of upside volatility." :"Put-Call IV parity: market views balanced."
-    array.push(interpretations, pc_interp)
-
-    // Skew Slope
-    slope_interp = skew_slope > 0.001 ? "Positive skew slope: IV increases with strike, potential demand for upside protection." :skew_slope < -0.001 ? "Negative skew slope: IV decreases with strike, often linked to downside risk aversion." :"Flat skew slope: no directional skew detected."
-    array.push(interpretations, slope_interp)
-
-    // 25Δ Skew
-    delta25_interp = math.abs(skew_25_delta) > 0.015 ? "Significant 25Δ skew detected, indicating market pricing asymmetry and risk premium for directional moves." : "Minimal 25Δ skew: symmetric risk-neutral distribution assumption holds."
-    array.push(interpretations, delta25_interp)
-
-    // Smile Asymmetry
-    asym_interp = math.abs(asymmetry) > 0.01 ? "Noticeable smile asymmetry: implies skewness in the implied distribution of returns." : "Symmetric smile shape: neutral market expectations on return distribution."
-    array.push(interpretations, asym_interp)
-
-    // Risk Reversal
-    rr_interp = risk_reversal > 0.002 ? "Positive risk reversal: puts priced higher, market hedging against downside risk." :risk_reversal < -0.002 ?  "Negative risk reversal: calls priced higher, market pricing upside volatility." :"Neutral risk reversal: balanced call/put sentiment."
-    array.push(interpretations, rr_interp)
-
-    interpretations
-
-
-format_pct(x) => str.tostring(x * 100, "#.##") + "%"
-
-// -- for finding direction ( PUT or CALL)
-// 1. ATM IV Rank for put_iv series (pass your own put_iv series here)
-atm_rank(put_iv, lookback) =>
-    iv_min = ta.lowest(put_iv, lookback)
-    iv_max = ta.highest(put_iv, lookback)
-    iv_range_safe = math.abs(iv_max - iv_min) > 1e-9
-    iv_rank = iv_range_safe ? (put_iv - iv_min) / (iv_max - iv_min) : 0.0
-    iv_rank
-
-// 2. VIX IV Rank and Historical Volatility + Vol-of-Vol
-vix_iv_rank_and_vol_of_vol(vix_live, vix_daily_close) =>
-    vix_daily_log_return = math.log(vix_daily_close / vix_daily_close[1])
-    vix_daily_hv = ta.stdev(vix_daily_log_return, 35) * 100
-    vix_weekly_hv = vix_daily_hv * math.sqrt(5)
-
-    vix_iv_low  = ta.lowest(vix_daily_close, 252)
-    vix_iv_high = ta.highest(vix_daily_close, 252)
-
-    vix_iv_rank = vix_iv_high != vix_iv_low ?100 * (vix_live - vix_iv_low) / (vix_iv_high - vix_iv_low) : 0
-    vix_iv_rank_normalized = vix_iv_rank / 100.0
-
-    // Calculate vol-of-vol (HV of VIX daily log returns)
-    vix_vol_of_vol = ta.stdev(vix_daily_log_return, 35) * 100
-
-    [vix_iv_rank, vix_iv_rank_normalized, vix_daily_hv, vix_weekly_hv, vix_vol_of_vol]
-
-// 3. Sensex Historical Volatility
-sensex_vol(daily_close) =>
-    daily_log_return = math.log(daily_close / daily_close[1])
-    daily_hv = ta.stdev(daily_log_return, 35) * 100
-    weekly_hv = daily_hv * math.sqrt(5)
-    [daily_hv, weekly_hv]
-
-
-threshold_base = 0.05
-threshold = threshold_base
-
-[vix_iv_rank, vix_iv_rank_normalized,_,_,vix_vol_of_vol]= vix_iv_rank_and_vol_of_vol(vix_live , vix_live )
-[sensex_daily_hv, _] = sensex_vol(spot)
-plot(vix_iv_rank, title="vix_iv_rank", display=display.data_window)
-plot(vix_iv_rank_normalized, title="vix_iv_rank_normalized", display=display.data_window)
-plot(vix_vol_of_vol, title="vix_vol_of_vol", display=display.data_window)
-plot(sensex_daily_hv, title="sensex_daily_hv", display=display.data_window)
-
-
-
-iv_diff_call_put = array.avg(call_ivs) - array.avg(put_ivs)
-greeks_delta_diff = array.avg(call_delta) - array.avg(put_delta)
-
-plot(iv_diff_call_put, title="iv_diff_call_put", display=display.data_window)
-plot(greeks_delta_diff, title="greeks_delta_diff", display=display.data_window)
-
-// This direction logic is under testing , could save us from false signal
-
-// Confirm IV signal only if delta difference confirms
-signal = (iv_diff_call_put > threshold) and (greeks_delta_diff > 0.1)
-
-// Further confirm with vol-of-vol trend
-signal := signal and (vix_vol_of_vol > ta.sma(vix_vol_of_vol, 10))
-
-// Confirm with Sensex HV
-signal := signal and (sensex_daily_hv > ta.sma(sensex_daily_hv, 10))
-
-// Generate final directional signal
-direction_v0 = signal ? (iv_diff_call_put > 0 ? "CALL" : "PUT") : "No Signal"
-int direction_v0_flag = na
-if direction_v0 == "CALL"
-    direction_v0_flag:=1
-else if direction_v0 == "PUT"
-    direction_v0_flag:=0
-else
-    direction_v0_flag :=na
-plot(direction_v0_flag, title="direction_v0", display=display.data_window)
-
-
-// === Scoring Logic ===
-// Function to assign scores based on thresholds
-score_rel_call_skew    = rel_call_skew > 0.3 ? 1 : 0
-score_rel_put_skew     = rel_put_skew < -0.3 ? -1 : 0
-score_put_call_skew    = put_call_skew < -3 ? -2 : 0
-score_skew_25delta     = skew_25delta < -3 ? -2 : 0
-score_risk_reversal    = risk_reversal < -3 ? -2 : 0
-score_vix_iv_rank      = vix_iv_rank > 3.5 ? -1 : 0
-score_vix_iv_rank_norm = vix_iv_rank_normalized < 0.1 ? 0 : 0  // Neutral in this case
-score_vix_vol_of_vol   = vix_vol_of_vol > 0.3 ? -1 : 0
-score_sensex_hv        = sensex_daily_hv < 0.05 ? 1 : 0
-score_iv_diff          = math.abs(iv_diff_call_put) < 0.1 ? 0 : 0  // Neutral
-score_delta_diff       = 5 > 0.5 ? 1 : 0
-
-
-
-// Total Score
-// This calcuation is filling null value on total_score, request chat gpt to look into the issue why value is zero in total_score
-total_score = score_rel_call_skew + score_rel_put_skew + score_put_call_skew + score_skew_25delta + score_risk_reversal + score_vix_iv_rank + score_vix_iv_rank_norm + score_vix_vol_of_vol + score_sensex_hv + score_iv_diff + score_delta_diff
-
-
-// === Label Output ===
-direction_2 = total_score >= 6  ? "🔼 Strong Bullish" : total_score >= 2  ? "🔼 Mild Bullish"   :total_score >= -1 ? "⚪️ Neutral"        :total_score >= -5 ? "🔽 Mild Bearish"   : "🔽 Strong Bearish"
-direction = total_score >= 2  ? "CALL" : total_score <= -2 ? "PUT"  : "No Signal"
-direction_confindence_score = total_score
-
-int direction_flag = na
-if direction == "CALL"
-    direction_flag:=1
-else if direction == "PUT"
-    direction_flag:=0
-else
-    direction_flag :=na
-
-plot(direction_flag, title="direction", display=display.data_window)
-plot(total_score*100, title="direction_confi_score", display=display.data_window)
-
-
-// old logic for Select recommended strike + side
-select_trade_strike() =>
-    max_diff = -1.0
-    float strike_sel = na
-    string side_sel = ""
-    atm_below_n_above_strikes = get_atm_striks(false)
-    for i=0 to array.size(call_ivs)-1
-        call_iv = array.get(call_ivs,i)
-        put_iv  = array.get(put_ivs,i)
-        strike  = array.get(atm_below_n_above_strikes,i)
-        diff_call = call_iv - put_iv
-        diff_put  = put_iv - call_iv
-        if diff_call > max_diff
-            max_diff := diff_call
-            strike_sel := strike
-            side_sel := "CALL"
-        if diff_put > max_diff
-            max_diff := diff_put
-            strike_sel := strike
-            side_sel := "PUT"
-    [strike_sel, side_sel]
-
-//[strike_rec, side_rec] =  select_trade_strike()
-
-// New function: select_strike_with_delta_scoring
-// Inputs:
-//   strikes_arr – array of strikes (OTM strikes for the direction side)
-//   ivs_arr – array of IVs for those strikes
-//   deltas_arr – array of deltas for those strikes
-//   atm_iv – IV of the ATM option
-//   direction – "buy Call" or "buy PUT"
-//   target_delta – float, desired delta magnitude (e.g. 0.25)
-//   iv_rank_func (optional) – a function you might use to weight IV vs historical IV
-
-select_strike_with_delta_scoring(strikes_arr, ivs_arr, deltas_arr, atm_iv, direction, target_delta) =>
-    var float best_score = -1.0
-    var float selected_strike = na
-    var float selected_iv = na
-    var float selected_delta = na
-
-    for i = 0 to array.size(strikes_arr) - 1
-        strike_i = array.get(strikes_arr, i)
-        iv_i     = array.get(ivs_arr, i)
-        delta_i  = array.get(deltas_arr, i)
-
-        // Only consider strikes on the correct side of spot
-        if (direction == "CALL" and strike_i > spot) or
-           (direction == "PUT" and strike_i < spot)
-
-            // Delta‐band filtering: ensure delta magnitude is near target
-            delta_diff = math.abs(math.abs(delta_i) - target_delta)
-
-            // Score components:
-
-            // A. Delta proximity score (lower is better)
-            //     you want delta close to target_delta
-            delta_score = 1.0 / (1.0 + delta_diff * 10)
-            // factor 10 just scales how heavily delta_diff affects score
-
-            // B. IV premium over ATM (how much richer this strike's IV is vs ATM)
-            iv_premium = iv_i - atm_iv
-
-            iv_score = iv_premium > 0 ? iv_premium : 0
-
-            // C. (Optional) Strike IV rank or skew contribution
-            //    you can weight the raw IV or relative skew here if available
-
-            // Total score (weights you can adjust)
-            score = delta_score * 0.5 + iv_score * 0.3
-
-            // If this score beats current best, choose this one
-            if score > best_score
-                best_score := score
-                selected_strike := strike_i
-                selected_iv := iv_i
-                selected_delta := delta_i
-
-    [selected_strike, selected_iv, selected_delta]
-
-//[target_strike, target_strike_iv, target_strike_delta] =
-// strikes_arr, ivs_arr, deltas_arr, atm_iv, direction, target_delta
-
-
-[target_strike, target_strike_iv, target_strike_delta]=select_strike_with_delta_scoring( strikes_arr = direction == "CALL" ? call_otm_strike_arr : put_otm_strike_arr, ivs_arr= direction == "CALL" ? call_ivs : put_ivs, deltas_arr=direction == "CALL" ? call_delta : put_delta, atm_iv=direction=="CALL"? atm_call_iv:atm_put_iv, direction=direction, target_delta = 0.25  )
-plot(target_strike, title="target_strike", display=display.data_window)
-
-strike_rec = target_strike
-side_rec= direction
-
-if barstate.islast
-    text_fun = "Trade: " + direction + "\nStrike: " + str.tostring(target_strike) +"\nIV: " + str.tostring(target_strike_iv, "#.###") +"\nDelta: " + str.tostring(target_strike_delta, "#.###"),
-    label.new(bar_index, high,  text = text_fun, style = label.style_label_up, color = color.green, size=size.large)
-
-var table option_table = table.new(position.top_right, 13, 10, border_width=1)
-if barstate.islast and 1==1 //table display on/off
-    //
-
-    // Step 1: Union of call and put strikes
-    strike_arr = array.new_float()
-    strike_arr.clear()
-
-    // Add all call strikes first
-    for i = 0 to array.size(call_otm_strike_arr) - 1
-        strike = array.get(call_otm_strike_arr, i)
-        array.push(strike_arr, strike)
-
-
-    // Add put strikes if not already present
-    for i = 0 to array.size(put_otm_strike_arr) - 1
-        strike = array.get(put_otm_strike_arr, i)
-        if not array.includes(strike_arr, strike)
-            array.push(strike_arr, strike)
-
-
-
-    // Step 2: Map greeks aligned with strike_arr
-    call_gamma_filtered = array.from(0.0, 0, 0, 0)
-    call_vega_filtered  = array.from(0.0, 0, 0, 0)
-    call_theta_filtered = array.from(0.0, 0, 0, 0)
-    call_delta_filtered = array.from(0.0, 0, 0, 0)
-    call_ivs_filtered   = array.from(0.0, 0, 0, 0)
-    put_gamma_filtered = array.new_float()
-    put_vega_filtered  = array.new_float()
-    put_theta_filtered = array.new_float()
-    put_delta_filtered = array.new_float()
-    put_ivs_filtered   = array.new_float()
-
-    for i = 0 to 3
-        array.push(put_gamma_filtered, array.get(put_gamma, i))
-        array.push(put_vega_filtered,  array.get(put_vega, i))
-        array.push(put_theta_filtered, array.get(put_theta, i))
-        array.push(put_delta_filtered, array.get(put_delta, i))
-        array.push(put_ivs_filtered,   array.get(put_ivs, i))
-        array.push(call_gamma_filtered, array.get(call_gamma, i))
-        array.push(call_vega_filtered,  array.get(call_vega, i))
-        array.push(call_theta_filtered, array.get(call_theta, i))
-        array.push(call_delta_filtered, array.get(call_delta, i))
-        array.push(call_ivs_filtered,   array.get(call_ivs, i))
-    for i = 0 to 3
-        put_gamma_filtered.push(0.0)
-        put_vega_filtered.push(0.0)
-        put_theta_filtered.push(0.0)
-        put_delta_filtered.push(0.0)
-        put_ivs_filtered.push(0.0)
-
-    table.cell(option_table, 0, 0, "Gamma Call", text_color=color.white, bgcolor=color.blue)
-    table.cell(option_table, 1, 0, "Vega Call", text_color=color.white, bgcolor=color.rgb(16, 92, 154))
-    table.cell(option_table, 2, 0, "Theta Call", text_color=color.white, bgcolor=color.rgb(3, 68, 120))
-    table.cell(option_table, 3, 0, "Delta Call", text_color=color.white, bgcolor=color.rgb(141, 167, 16))
-    table.cell(option_table, 4, 0, "Call IV", text_color=color.white, bgcolor=color.blue)
-    table.cell(option_table, 5, 0, "Strike", text_color=color.white, bgcolor=color.blue)
-    table.cell(option_table, 6, 0, "Put IV", text_color=color.white, bgcolor=color.blue)
-    table.cell(option_table, 7, 0, "Delta Put", text_color=color.white, bgcolor=color.rgb(141, 167, 16))
-    table.cell(option_table, 8, 0, "Theta Put", text_color=color.white, bgcolor=color.rgb(3, 68, 120))
-    table.cell(option_table, 9, 0, "Vega Put", text_color=color.white, bgcolor=color.rgb(16, 92, 154))
-    table.cell(option_table,10, 0, "Gamma Put", text_color=color.white, bgcolor=color.blue)
-
-    for i=0 to array.size(strike_arr)-1
-        strike = array.get(strike_arr,i)
-        call_iv = array.get(call_ivs_filtered,i)*100
-        put_iv  = array.get(put_ivs_filtered,i)*100
-        call_delta_val = array.get(call_delta_filtered,i)
-        put_delta_val = array.get(put_delta_filtered,i)
-        call_gamma_val = array.get(call_gamma_filtered,i)
-        put_gamma_val = array.get(put_gamma_filtered,i)
-        call_vega_val = array.get(call_vega_filtered,i)
-        put_vega_val = array.get(put_vega_filtered,i)
-        call_theta_val = array.get(call_theta_filtered,i)
-        put_theta_val = array.get(put_theta_filtered,i)
-
-        [strike_id, _] = get_option_ticker(strike, true)
-
-        row_bg = strike == strike_rec ? color.new(color.green, 80) : na
-        table.cell(option_table,0,i+1,str.tostring(call_gamma_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,1,i+1,str.tostring(call_vega_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,2,i+1,str.tostring(call_theta_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,3,i+1,str.tostring(call_delta_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,4,i+1,str.tostring(call_iv,'#.##'),
-                   bgcolor=(strike==strike_rec and side_rec=="CALL") ? color.green : na)
-        //table.cell(option_table,7,i+1,str.tostring(strike), bgcolor=row_bg)
-       // table.cell(option_table,8,i+1,str.tostring(call_iv_val,'#.###'), bgcolor=row_bg)
-        table.cell(option_table,5,i+1,str.tostring(strike),   text_color=color.white, bgcolor=color.gray)
-        table.cell(option_table,6,i+1,str.tostring(put_iv,'#.##'),
-                   bgcolor=(strike==strike_rec and side_rec=="PUT") ? color.green : na)
-        table.cell(option_table,7,i+1,str.tostring(put_delta_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,8,i+1,str.tostring(put_theta_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,9,i+1,str.tostring(put_vega_val,'#.##'), bgcolor=row_bg)
-        table.cell(option_table,10,i+1,str.tostring(put_gamma_val,'#.##'), bgcolor=row_bg)
-
-if barstate.islast
-    var table skew_table = table.new(position.bottom_right, 3, 8, border_width=1)
-    var array<string> interp_arr = get_skew_matrix_interpretations(rel_call_skew, rel_put_skew, put_call_skew, skew_slope, skew_25delta, smile_asymmetry, risk_reversal)
-
-
-    table.cell(skew_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
-    table.cell(skew_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
-    table.cell(skew_table, 2, 0, "Interpretation", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
-
-    table.cell(skew_table, 0, 1, "Call Relative Skew",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 1, format_pct(rel_call_skew),bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 0, 2, "Put Relative Skew",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 2, format_pct(rel_put_skew),bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 0, 3, "Put-Call Skew",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 3, format_pct(put_call_skew),bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 0, 4, "Skew Slope",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 4, str.tostring(skew_slope, "#.###"),bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 0, 5, "25Δ Skew",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 5, format_pct(skew_25delta),bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 0, 6, "Asymmetry",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 6, format_pct(smile_asymmetry),bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 0, 7, "Risk Reversal",bgcolor = color.rgb(226, 221, 249))
-    table.cell(skew_table, 1, 7, format_pct(risk_reversal),bgcolor = color.rgb(226, 221, 249))
-    for i = 0 to 6
-        table.cell(skew_table, 2, i + 1, array.get(interp_arr, i), text_size=size.normal, bgcolor=color.new(color.gray, 90))
-        alert(array.get(interp_arr, i), alert.freq_once_per_bar_close)
+// ---------------------------------- Additional Greeks
+
+// Gamma
+gamma(S, K, T, r, q, sigma) =>
+    T := math.max(T, 1e-9)
+    d1 = bs_d1(S, K, T, r, q, sigma)
+    norm_pdf = 0.398942280401 * math.exp(-0.5 * d1 * d1)
+    norm_pdf * math.exp(-q * T) / (S * sigma * math.sqrt(T))
+
+// Vega
+vega(S, K, T, r, q, sigma) =>
+    T := math.max(T, 1e-9)
+    d1 = bs_d1(S, K, T, r, q, sigma)
+    norm_pdf = 0.398942280401 * math.exp(-0.5 * d1 * d1)
+    S * math.exp(-q * T) * norm_pdf * math.sqrt(T)
+
+// Theta
+theta(S, K, T, r, q, sigma, call_option) =>
+    T := math.max(T, 1e-9)
+    d1 = bs_d1(S, K, T, r, q, sigma)
+    d2 = d1 - sigma * math.sqrt(T)
+    norm_pdf = 0.398942280401 * math.exp(-0.5 * d1 * d1)
+    term1 = - (S * norm_pdf * sigma * math.exp(-q * T)) / (2 * math.sqrt(T))
+    if call_option
+        term2 = r * K * math.exp(-r * T) * norm_cdf(d2)
+        term3 = -q * S * math.exp(-q * T) * norm_cdf(d1)
+        term1 - term2 + term3
+    else
+        term2 = r * K * math.exp(-r * T) * norm_cdf(-d2)
+        term3 = -q * S * math.exp(-q * T) * norm_cdf(-d1)
+        term1 + term2 + term3
+
+// Rho
+rho(S, K, T, r, q, sigma, call_option) =>
+    T := math.max(T, 1e-9)
+    d2 = bs_d1(S, K, T, r, q, sigma) - sigma * math.sqrt(T)
+    if call_option
+        K * T * math.exp(-r * T) * norm_cdf(d2)
+    else
+        -K * T * math.exp(-r * T) * norm_cdf(-d2)
