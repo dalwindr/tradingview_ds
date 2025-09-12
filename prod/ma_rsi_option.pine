@@ -5,16 +5,16 @@ option_gap_threshold = input.float(3, "option Gap Threshold (%)")
 gap_threshold = (syminfo.type == "option") ? option_gap_threshold : non_option_threshold_input
 
 
-// === -------------------RSI Logic ---------------- ===
+// === ✅ -------------------input TF ---------------- ===
 // == atr
-atr_period = input.int(30, "ta period")
-tp_atr_mult   = input.float(4.0, "TP ATR Multiple")
+atr_period = input.int(14, "ta period")
+tp_atr_mult   = input.float(7.0, "TP ATR Multiple")
 sl_atr_mult   = input.float(2.5, "SL ATR Multiple")
 
 // === RSI Settings ===
-rsi_tf        = input.timeframe("3", "RSI Timeframe")
-rsi_len       = input.int(70, "RSI Length")
-rsi_ma_len    = input.int(45, "RSI MA Length")
+rsi_len       = input.int(40, "RSI Length")
+fast_rsi_len    = input.int(50, "RSI MA Length")
+slow_rsi_len    = input.int(100, "RSI MA Length")
 rsi_upper = 20
 // === moving average Settings ===
 ma_tf                   = input.timeframe("3", "MA Timeframe")
@@ -22,6 +22,13 @@ fast_ma_len = input.int(25, "Fast MA Length")
 medium_ma_len = input.int(70, "Medium MA Length")
 slow_ma_len = input.int(100, "Slow MA Length")
 
+
+vix_live = request.security("NSE:INDIAVIX", "3", close)
+spot     = request.security("BSE:SENSEX", "3", close)
+rounded_spot = math.round(spot / 100) * 100
+plot(spot, title="spot_price", display=display.data_window)
+plot(rounded_spot, title="atm_strike", display=display.data_window)
+plot(vix_live, title="vix_live", display=display.data_window)
 
 
 // === GAP COOLDOWN FUNCTION ===
@@ -101,59 +108,64 @@ gap_cooldown_passed() =>
 [is_in_cooldown, cooling_duration, gap_pct] = gap_cooldown_passed()
 abs_gap = math.abs(gap_pct)
 is_new_day = dayofmonth != dayofmonth[1]
-
+// ✅ print cooling gap at market gap
 if is_new_day and abs_gap > gap_threshold
     label.new(bar_index,high + high * 0.002, syminfo.type + "\n" + "Daily Gap: " + str.tostring(gap_pct, "#.##") + "%\nCools for = " + str.tostring(cooling_duration, "#") + " min",style = label.style_label_left,yloc = gap_pct > 0 ? yloc.abovebar : yloc.belowbar,color =color.new(color.black, 96),textcolor = gap_pct > 0 ?  color.green: color.red,size = size.normal,force_overlay=true)
 
-
-
 // -- rsi data prep
-main_rsi      = request.security(syminfo.tickerid, rsi_tf, ta.rsi(close, rsi_len))
-smooth_rsi    = ta.sma(main_rsi, rsi_ma_len)
-
-
-// -- rsi signal
-rsi_entry_signal = (main_rsi > smooth_rsi) and (main_rsi > rsi_upper)
-rsi_exit_signal  = (main_rsi < smooth_rsi)
-
 // === ------------Moving Average Trend Logic ------------===
 
 // === moving average data prep ===
 // Calculate SMA on current timeframe
-[tf_price_data, momentum_ma, momentum_ma_slow, momentum_ma_long, atr, time_val] = request.security(syminfo.tickerid, ma_tf, [close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len), ta.atr(atr_period), time])
+[main_rsi, tf_price_data, momentum_ma_fast, momentum_ma_med, momentum_ma_slow, atr, time_val, hour_, minute_] = request.security(syminfo.tickerid, ma_tf, [ta.rsi(close, rsi_len), close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len), ta.atr(atr_period), time, hour, minute])
 
+
+//main_rsi      = request.security(syminfo.tickerid, rsi_tf, ta.rsi(close, rsi_len))
+rsi_fast    = ta.sma(main_rsi, fast_rsi_len)
+rsi_slow    = ta.sma(main_rsi, slow_rsi_len)
+plot(rsi_slow, color=color.red,title="slow rsi")
+plot(main_rsi, title="rsi (3 period)")
+plot(rsi_fast, color = color.green,title="Fast rsi")
+plot(50, color = color.black,title="rsi mid limit")
+plot(70, color = color.red, title="rsi upper limit")
+plot(30, color = color.green, title="rsi lower limit")
+
+
+// -- rsi signal
+rsi_entry_signal = (rsi_fast > 50)  and (rsi_fast > rsi_slow) and ta.crossover(rsi_fast, rsi_slow), //
+rsi_exit_signal  = (rsi_slow < rsi_fast)
 
 // === moving average signal ===
-ma_entry_signal = (tf_price_data > momentum_ma_long) and (momentum_ma > momentum_ma_slow) and (momentum_ma_slow > momentum_ma_long)
-ma_exit_signal  = (momentum_ma < momentum_ma_slow)
+ma_entry_signal = (tf_price_data > momentum_ma_fast) and (momentum_ma_fast > momentum_ma_med) and (momentum_ma_med > momentum_ma_slow)
+ma_exit_signal  = (momentum_ma_fast < momentum_ma_med)
 
-// === Combine Signals ===
+// === ✅Combine Signals rsi, ma, cooling perod  ===
 buy_signal = ma_entry_signal and rsi_entry_signal and not is_in_cooldown
-exit_signal = ma_exit_signal or rsi_exit_signal
+rsi_exit = ma_exit_signal or rsi_exit_signal
 
 
-// === other input
+// === ✅setting Market entery and exit time
 option_type = str.contains(syminfo.tickerid, "C") ? "CE" : "PE"
 exit_hour     = input.int(14, "Exit Hour", minval=0, maxval=23)
 exit_minute   = input.int(55, "Exit Minute", minval=0, maxval=59)
 debug_mode    = input.bool(false, "Show Debug Info")
 
 
-// === Time Logic ===
+// === ✅ gap Time Logic ===
 //time_tf = input.timeframe("5", "Trade execute Time Check -  TF")
 //time_val = request.security(syminfo.tickerid, time_tf, time)
-hour_tf = hour(time_val)
-minute_tf = minute(time_val)
-is_after_920  = (hour_tf > 9) or (hour_tf == 9 and minute_tf >= 20)
-is_before_eod = (hour_tf < exit_hour) or (hour_tf == exit_hour and minute_tf < exit_minute)
+// hour_tf = hour(time_val)
+// minute_tf = minute(time_val)
+is_after_920  = (hour_ > 9) or (hour_ == 9 and minute_ >= 20)
+is_before_eod = (hour_ < exit_hour) or (hour_ == exit_hour and minute_ < exit_minute)
 within_trading_window = is_after_920 and is_before_eod
+//is_eod = (hour_ == exit_hour and minute_ == exit_minute)
 
-// === Enter/exit Trade Logic ===
-can_enter = buy_signal and within_trading_window and strategy.opentrades == 0
-
+// ✅=== Enter Trade Logic ===
 var float entry_price = na
 var float tp_price = na
 var float sl_price = na
+can_enter = buy_signal and within_trading_window and strategy.opentrades == 0
 
 if can_enter and barstate.isconfirmed
     strategy.entry("Long", strategy.long, alert_message=option_type)
@@ -163,7 +175,11 @@ if can_enter and barstate.isconfirmed
     tp_price := entry_price + atr * tp_atr_mult
     sl_price := entry_price - atr * sl_atr_mult
 
-exit_now = strategy.position_size > 0 and (exit_signal or not is_before_eod or tf_price_data >= tp_price or tf_price_data <= sl_price)
+exit_signal =    not within_trading_window or ma_exit_signal // and rsi_exit
+
+// exit signal ✅
+exit_now = strategy.position_size > 0 and (exit_signal or tf_price_data >= tp_price or tf_price_data <= sl_price)
+
 
 if exit_now and barstate.isconfirmed
     pnl_percent = (tf_price_data - entry_price) / entry_price * 100
@@ -198,15 +214,11 @@ if exit_now and barstate.isconfirmed
     tp_price := na
     sl_price := na
 
-// But plot MAs using current chart timeframe for visual alignment
-plot(ta.sma(close, fast_ma_len), color=color.green, title="Fast MA (local)",force_overlay=true)
-plot(ta.sma(close, medium_ma_len), color=color.orange, title="Medium MA (local)", force_overlay=true)
-plot(ta.sma(close, slow_ma_len), color=color.red, title="Slow MA (local)", force_overlay=true)
-plot(main_rsi)
-plot(smooth_rsi, color = color.green)
-plot(50, color = color.black)
-plot(70, color = color.red)
-plot(30, color = color.green)
-// === Debug Plots ===
-plotshape(debug_mode and buy_signal, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small, force_overlay=true)
-plotshape(debug_mode and exit_signal, title="Exit Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, force_overlay=true)
+// But plotting ✅
+plot(momentum_ma_fast, color=color.green, title="Fast MA (local)",force_overlay=true)
+plot(momentum_ma_med, color=color.orange, title="Medium MA (local)", force_overlay=true)
+plot(momentum_ma_slow, color=color.red, title="Slow MA (local)", force_overlay=true)
+
+// // === Debug Plots ===
+// plotshape(debug_mode and buy_signal, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal, force_overlay=true)
+// plotshape(debug_mode and exit_signal, title="Exit Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.normal, force_overlay=true)
