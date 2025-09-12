@@ -555,7 +555,7 @@ side_rec= direction
 
 if barstate.islast
     text_fun = "Trade: " + direction + "\nStrike: " + str.tostring(target_strike) +"\nIV: " + str.tostring(target_strike_iv, "#.###") +"\nDelta: " + str.tostring(target_strike_delta, "#.###"),
-    label.new(bar_index, high,  text = text_fun, style = label.style_label_up, color = color.green, size=size.large)
+    //label.new(bar_index, high,  text = text_fun, style = label.style_label_up, color = color.green, size=size.large)
 
 
 

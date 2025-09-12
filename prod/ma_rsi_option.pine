@@ -111,15 +111,8 @@ rsi_exit_signal  = (main_rsi < smooth_rsi)
 
 // === moving average data prep ===
 // Calculate SMA on current timeframe
-tf_price_data = request.security(syminfo.tickerid, ma_tf, close)
-fast_ma = ta.sma(close, fast_ma_len)
-medium_ma = ta.sma(close, medium_ma_len)
-slow_ma = ta.sma(close, slow_ma_len)
+[tf_price_data, momentum_ma, momentum_ma_slow, momentum_ma_long] = request.security(syminfo.tickerid, ma_tf, [close,ta.sma(close, fast_ma_len),ta.sma(close, medium_ma_len),ta.sma(close, slow_ma_len)])
 
-// Request those SMAs values on the ma_tf timeframe
-momentum_ma = request.security(syminfo.tickerid, ma_tf, fast_ma)
-momentum_ma_slow = request.security(syminfo.tickerid, ma_tf, medium_ma)
-momentum_ma_long = request.security(syminfo.tickerid, ma_tf, slow_ma)
 
 // === moving average signal ===
 ma_entry_signal = (tf_price_data > momentum_ma_long) and (momentum_ma > momentum_ma_slow) and (momentum_ma_slow > momentum_ma_long)
