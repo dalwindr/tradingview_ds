@@ -83,12 +83,12 @@ get_atm_striks(is_call)=>
     var array<float> otm_strikes = array.new_float()
     array.clear(otm_strikes)
     if is_call
-        k = 4
-        for i = 1 to 4
+        k = 3
+        for i = 1 to 3
             strike_dn = rounded_spot - (k -i)*100
             array.push(otm_strikes, strike_dn)
     else
-        for i = 1 to 4
+        for i = 1 to 3
             strike_up = rounded_spot + i*100
             array.push(otm_strikes, strike_up)
     otm_strikes
@@ -438,7 +438,7 @@ score_vix_iv_rank_norm = vix_iv_rank_normalized < 0.1 ? 0 : 0  // Neutral in thi
 score_vix_vol_of_vol   = vix_vol_of_vol > 0.3 ? -1 : 0
 score_sensex_hv        = sensex_daily_hv < 0.05 ? 1 : 0
 score_iv_diff          = math.abs(iv_diff_call_put) < 0.1 ? 0 : 0  // Neutral
-score_delta_diff       = 5 > 0.5 ? 1 : 0
+score_delta_diff       = greeks_delta_diff > 0.5 ? 1 : 0
 
 
 
@@ -461,7 +461,7 @@ else
     direction_flag :=na
 
 plot(direction_flag, title="direction", display=display.data_window)
-plot(total_score*100, title="direction_confi_score", display=display.data_window)
+plot(total_score, title="direction_confi_score", display=display.data_window)
 
 
 // old logic for Select recommended strike + side
@@ -557,6 +557,9 @@ if barstate.islast
     text_fun = "Trade: " + direction + "\nStrike: " + str.tostring(target_strike) +"\nIV: " + str.tostring(target_strike_iv, "#.###") +"\nDelta: " + str.tostring(target_strike_delta, "#.###"),
     label.new(bar_index, high,  text = text_fun, style = label.style_label_up, color = color.green, size=size.large)
 
+
+
+// ------------------------------- print Table ----------------------------------------------------------------------------------------
 var table option_table = table.new(position.top_right, 13, 10, border_width=1)
 if barstate.islast and 1==1 //table display on/off
     //
@@ -580,18 +583,18 @@ if barstate.islast and 1==1 //table display on/off
 
 
     // Step 2: Map greeks aligned with strike_arr
-    call_gamma_filtered = array.from(0.0, 0, 0, 0)
-    call_vega_filtered  = array.from(0.0, 0, 0, 0)
-    call_theta_filtered = array.from(0.0, 0, 0, 0)
-    call_delta_filtered = array.from(0.0, 0, 0, 0)
-    call_ivs_filtered   = array.from(0.0, 0, 0, 0)
+    call_gamma_filtered = array.from(0.0, 0, 0)
+    call_vega_filtered  = array.from(0.0, 0, 0)
+    call_theta_filtered = array.from(0.0, 0, 0)
+    call_delta_filtered = array.from(0.0, 0, 0)
+    call_ivs_filtered   = array.from(0.0, 0, 0)
     put_gamma_filtered = array.new_float()
     put_vega_filtered  = array.new_float()
     put_theta_filtered = array.new_float()
     put_delta_filtered = array.new_float()
     put_ivs_filtered   = array.new_float()
 
-    for i = 0 to 3
+    for i = 0 to 2
         array.push(put_gamma_filtered, array.get(put_gamma, i))
         array.push(put_vega_filtered,  array.get(put_vega, i))
         array.push(put_theta_filtered, array.get(put_theta, i))
@@ -602,7 +605,7 @@ if barstate.islast and 1==1 //table display on/off
         array.push(call_theta_filtered, array.get(call_theta, i))
         array.push(call_delta_filtered, array.get(call_delta, i))
         array.push(call_ivs_filtered,   array.get(call_ivs, i))
-    for i = 0 to 3
+    for i = 0 to 2
         put_gamma_filtered.push(0.0)
         put_vega_filtered.push(0.0)
         put_theta_filtered.push(0.0)
