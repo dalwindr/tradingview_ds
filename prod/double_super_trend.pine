@@ -3,13 +3,13 @@ strategy("supertrend double", overlay=true, default_qty_type=strategy.fixed, def
 g_ch = "dalwinder"
 g_st ="dalwinder"
 backtest_start_ts = input.time(timestamp("11 Sep 2025 10:00 +0000"), title="Backtest Start")
-backtest_end_ts   = input.time(timestamp("13 Sep 2025 13:25 +0000"), title="Backtest End")
+backtest_end_ts   = input.time(timestamp("13 Sep 2050 13:25 +0000"), title="Backtest End")
+
 int fast_supertrend_period = input.int(defval=10, title="ATR Length", minval=1, group=g_st)
 float fast_supertrend_factor = input.float(defval=3.0, title="Factor", minval=0.01, step=0.01, group=g_st)
 int slow_suptrend_period = input.int(defval=70, title="ATR Length", minval=1, group=g_st)
 float slow_supertrend_factor = input.float(defval=7.0, title="Factor", minval=0.01, step=0.01, group=g_st)
-
-
+position_size = input.int(1, title="Position Size", minval=1)
 
 backtest_v1() =>
     // Backtest window (editable via inputs)
@@ -27,38 +27,61 @@ backtest_v1() =>
 
 
 // SUPER TREND FAST
-
-
 bool i_st_display = input.bool(defval=true, title='Display', group=g_st)
 color i_pos_col = input.color(defval=color.green,title='Positive', group=g_ch)
 color i_neg_col = input.color(defval=#FF5250, title='Negative', group=g_ch)
 [supertrend, direction] = ta.supertrend(fast_supertrend_factor, fast_supertrend_period)
-supertrend := i_st_display and barstate.isfirst ? na : supertrend
 upTrend = direction < 0
 downTrend = direction > 0
-upTrend_temp = plot(series=i_st_display and direction < 0 ? supertrend : na, title="Supertrend Up", color=i_pos_col, style=plot.style_linebr)
-downTrend_temp = plot(series=i_st_display and direction < 0 ? na : supertrend, title="Supertrend Down", color=i_neg_col, style=plot.style_linebr)
+upTrend_temp = plot(i_st_display  and upTrend ? supertrend : na, title="Supertrend Up", color=i_pos_col, style=plot.style_linebr)
+downTrend_temp = ploti_st_display and downTrend ? supertrend: na , title="Supertrend Down", color=i_neg_col, style=plot.style_linebr)
 
 
 // SUPER TREND SLOW
-
 bool i_st_display_slow = input.bool(defval=true, title='Display', group=g_st)
 color i_pos_col_slow = input.color(defval=color.blue, title='Positive', group=g_ch)
 color i_neg_col_slow = input.color(defval=color.orange, title='Negative', group=g_ch)
 [supertrend_slow, direction_slow] = ta.supertrend(slow_supertrend_factor, slow_suptrend_period)
-supertrend_slow := i_st_display_slow and barstate.isfirst ? na : supertrend_slow
 upTrend_slow = direction_slow < 0
 downTrend_slow = direction_slow > 0
-upTrend_temp_slow = plot(series=i_st_display_slow and direction_slow < 0 ? supertrend_slow : na, title="Supertrend Up", color=i_pos_col_slow, style=plot.style_linebr, linewidth = 2)
-downTrend_temp_slow = plot(series=i_st_display_slow and direction_slow < 0 ? na : supertrend_slow, title="Supertrend Down", color=i_neg_col_slow, style=plot.style_linebr, linewidth = 2)
+upTrend_temp_slow = plot(series=i_st_display_slow and upTrend_slow ? supertrend_slow : na, title="Supertrend Up", color=i_pos_col_slow, style=plot.style_linebr, linewidth = 2)
+downTrend_temp_slow = plot(series=i_st_display_slow and downTrend_slow ?supertrend_slow: na, title="Supertrend Down", color=i_neg_col_slow, style=plot.style_linebr, linewidth = 2)
 
+downTrend_htf = downTrend_slow
+downTrend_ltf = downTrend
+upTrend_htf = upTrend_slow
+upTrend_ltf = upTrend
 
-// if (direction < 0 and strategy.position_size <= 0 and in_backtesting_window)
-//     log.info("Long Entry Signal Triggered at bar: " + str.tostring(bar_index) + " price: " + str.tostring(close))
-//     strategy.entry("Long", strategy.long)
+// Entry and Exit logic
+//One-direction-only entry ( not allow heghe entry)
+// if heghing is there , it does Hedge cleanup
+// entry only when htf and ltf are aligned
+// exit when ltf exit recieved without htf consent
 
-// // Exit Long
-// if (direction > 0 and strategy.position_size > 0 and in_backtesting_window)
-//     log.info("Long Exit Signal Triggered at bar: " + str.tostring(bar_index) + " price: " + str.tostring(close))
-//     strategy.close("Long")
+// Exit Scenerios
+//====================
+// if downTrend_ltf == false that means by default/or system generated exit signal is recieved
+if not(downTrend_ltf) and strategy.position_size<0 and not(strategy.position_size>0) and in_backtesting_window:
+    strategy.close("short")
 
+// if upTrend_ltf == false that means by default/or system generated exit signal is recieved
+if not(upTrend_ltf) and strategy.position_size>0 and not(strategy.position_size<0) and in_backtesting_window:
+    strategy.close("long")
+
+// Entry Scenerios
+//==================
+// Here we need ltf need htf alignment as well and we might need to close open side position if opened
+
+// Short entry allowed only when both HTF and LTF signals align
+if downTrend_htf and downTrend_ltf and in_backtesting_window
+    if strategy.position_size > 0
+        strategy.close("long")
+    if strategy.position_size == 0
+        strategy.entry("Short", strategy.short, qty=position_size)
+
+// long entry allowed only when both HTF and LTF signals align
+if upTrend_htf and upTrend_ltf and in_backtesting_window
+    if strategy.position_size < 0
+        strategy.close("short")
+    if strategy.position_size == 0
+        strategy.entry("Long", strategy.long, qty=position_size)
