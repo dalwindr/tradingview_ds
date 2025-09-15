@@ -1,0 +1,152 @@
+//@version=5
+strategy("RSI Combo Signals (TGT & SIG)", overlay=false)
+g_ch = "dalwinder"
+g_st ="dalwinder"
+backtest_start_ts = input.time(timestamp("1 Sep 2025 10:00 +0000"), title="Backtest Start")
+backtest_end_ts   = input.time(timestamp("13 Sep 2050 13:25 +0000"), title="Backtest End")
+
+int fast_supertrend_period = input.int(defval=10, title="ATR Length", minval=1, group=g_st)
+float fast_supertrend_factor = input.float(defval=3.0, title="Factor", minval=0.01, step=0.01, group=g_st)
+int slow_suptrend_period = input.int(defval=70, title="ATR Length", minval=1, group=g_st)
+float slow_supertrend_factor = input.float(defval=7.0, title="Factor", minval=0.01, step=0.01, group=g_st)
+position_size = input.int(1, title="Position Size", minval=1)
+
+
+// RSI Lengths
+fastLen = input.int(6, "Fast RSI Length")
+medLen = input.int(14, "Medium RSI Length")
+slowLen = input.int(21, "Slow RSI Length")
+
+// RSI Calculations
+fastRSI = ta.rsi(close, fastLen)
+medRSI = ta.rsi(close, medLen)
+slowRSI = ta.rsi(close, slowLen)
+
+// Thresholds
+oversoldFast = 30
+overboughtFast = 70
+midLevel = 50
+
+
+
+backtest_v1() =>
+    // Backtest window (editable via inputs)
+
+    // Calculate duration in days
+    backtest_duration = (backtest_end_ts - backtest_start_ts) / (1000 * 60 * 60 * 24)
+    backtest_duration_ret = str.format("Backtest Duration: {0,number,#.##} days", backtest_duration)
+
+    // Whether current bar is inside the window
+    in_backtesting_window = (time >= backtest_start_ts) and (time <= backtest_end_ts)
+
+    [in_backtesting_window, backtest_duration_ret]
+
+[in_backtesting_window, backtest_duration]= backtest_v1()
+
+
+// SIG Table Signals
+downTrend_htf = slowRSI < midLevel
+upTrend_htf = slowRSI > midLevel
+
+downTrend_ltf = medRSI < midLevel
+upTrend_ltf = medRSI > midLevel
+
+// Entry Triggers (based on TGT Table)
+
+// Long Entry Trigger: Fast RSI crosses above oversold (30)
+longEntry = ta.crossover(fastRSI, oversoldFast) and upTrend_htf and upTrend_ltf and in_backtesting_window
+
+// Short Entry Trigger: Fast RSI crosses below overbought (70)
+shortEntry = ta.crossunder(fastRSI, overboughtFast) and downTrend_htf and downTrend_ltf and in_backtesting_window
+
+// Exit Signals
+longExit = ta.crossunder(fastRSI, overboughtFast) or ta.crossunder(medRSI, midLevel) and in_backtesting_window
+shortExit = ta.crossover(fastRSI, oversoldFast) or ta.crossover(medRSI, midLevel) and in_backtesting_window
+
+// Plot RSI values in separate pane
+plot(fastRSI, color=color.orange, title="Fast RSI")
+plot(medRSI, color=color.blue, title="Medium RSI")
+plot(slowRSI, color=color.green, title="Slow RSI")
+hline(oversoldFast, "Oversold Fast", color=color.orange, linestyle=hline.style_dotted)
+hline(overboughtFast, "Overbought Fast", color=color.orange, linestyle=hline.style_dotted)
+hline(midLevel, "Mid Level", color=color.gray)
+
+// Plot Signals as Background Colors
+bgcolor(longEntry ? color.new(color.green, 80) : na, title="Long Entry Signal")
+bgcolor(shortEntry ? color.new(color.red, 80) : na, title="Short Entry Signal")
+
+// // Plot Entry Labels
+// if (longEntry)
+//     label.new(bar_index, low, "Long Entry", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+// if (shortEntry)
+//     label.new(bar_index, high, "Short Entry", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+// // Plot Exit Labels
+// if (longExit)
+//     label.new(bar_index, high, "Long Exit", style=label.style_label_down, color=color.yellow, textcolor=color.black, size=size.small)
+// if (shortExit)
+//     label.new(bar_index, low, "Short Exit", style=label.style_label_up, color=color.yellow, textcolor=color.black, size=size.small)
+
+// // Plot SIG table values as plotshape for quick visual
+plotshape(downTrend_htf, title="DownTrend HTF", location=location.top, color=color.red, style=shape.triangledown, size=size.tiny, force_overlay = true)
+plotshape(upTrend_htf, title="UpTrend HTF", location=location.top, color=color.green, style=shape.triangleup, size=size.tiny, force_overlay = true)
+
+// plotshape(downTrend_ltf, title="DownTrend LTF", location=location.bottom, color=color.red, style=shape.triangledown, size=size.tiny, transp=80)
+// plotshape(upTrend_ltf, title="UpTrend LTF", location=location.bottom, color=color.green, style=shape.triangleup, size=size.tiny, transp=80)
+
+
+
+// Long Entry Trigger: Fast RSI crosses above oversold (30)
+enter_long = longEntry
+
+// Short Entry Trigger: Fast RSI crosses below overbought (70)
+enter_short = shortEntry
+
+// Exit Signals
+exit_long = longExit
+exit_short = longExit
+
+// Entry and Exit logic
+//One-direction-only entry ( not allow heghe entry)
+// if heghing is there , it does Hedge cleanup
+// entry only when htf and ltf are aligned
+// exit when ltf exit recieved without htf consent
+
+if (enter_long)
+    strategy.entry("Long", strategy.long)
+
+if (enter_short)
+    strategy.entry("Short", strategy.short)
+
+if (exit_long)
+    strategy.close("Long")
+
+if (exit_short)
+    strategy.close("Short")
+// // Exit Scenerios
+// //====================
+// // if downTrend_ltf == false that means by default/or system generated exit signal is recieved
+// if not(downTrend_ltf) and strategy.position_size<0 and not(strategy.position_size>0) and in_backtesting_window:
+//     strategy.close("short")
+
+// // if upTrend_ltf == false that means by default/or system generated exit signal is recieved
+// if not(upTrend_ltf) and strategy.position_size>0 and not(strategy.position_size<0) and in_backtesting_window:
+//     strategy.close("long")
+
+// // Entry Scenerios
+// //==================
+// // Here we need ltf need htf alignment as well and we might need to close open side position if opened
+
+// // Short entry allowed only when both HTF and LTF signals align
+// if downTrend_htf and downTrend_ltf and in_backtesting_window
+//     if strategy.position_size > 0
+//         strategy.close("long")
+//     if strategy.position_size == 0
+//         strategy.entry("Short", strategy.short, qty=position_size)
+
+// // long entry allowed only when both HTF and LTF signals align
+// if upTrend_htf and upTrend_ltf and in_backtesting_window
+//     if strategy.position_size < 0
+//         strategy.close("short")
+//     if strategy.position_size == 0
+//         strategy.entry("Long", strategy.long, qty=position_size)

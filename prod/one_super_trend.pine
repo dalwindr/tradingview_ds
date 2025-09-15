@@ -1,0 +1,84 @@
+//@version=6
+strategy("single super trend", overlay=false, fill_orders_on_standard_ohlc = true)
+g_ch = "dalwinder"
+g_st ="dalwinder"
+backtest_start_ts = input.time(timestamp("1 Sep 2025 10:00 +0000"), title="Backtest Start")
+backtest_end_ts   = input.time(timestamp("13 Sep 2050 13:25 +0000"), title="Backtest End") // its future date , is good for both live trading and backtesting for speciied period
+
+int fast_supertrend_period = input.int(defval=100, title="ATR Length", minval=1, group=g_st)
+float fast_supertrend_factor = input.float(defval=4, title="Factor", minval=0.01, step=0.01, group=g_st)
+position_size = input.int(1, title="Position Size", minval=1)
+
+m3 = timeframe.period == "3"
+m5 = timeframe.period == "5"
+m10 = timeframe.period == "10"
+m15= timeframe.period == "15" //and not(stop_signal)
+m30 = timeframe.period ==  "30"
+m60 = timeframe.period == "60"
+fast_supertrend_period:= m15? 100:fast_supertrend_period
+fast_supertrend_factor:= m15? 4:fast_supertrend_factor
+
+
+backtest_v1() =>
+    // Backtest window (editable via inputs)
+
+    // Calculate duration in days
+    backtest_duration = (backtest_end_ts - backtest_start_ts) / (1000 * 60 * 60 * 24)
+    backtest_duration_ret = str.format("Backtest Duration: {0,number,#.##} days", backtest_duration)
+
+    // Whether current bar is inside the window
+    in_backtesting_window = (time >= backtest_start_ts) and (time <= backtest_end_ts)
+
+    [in_backtesting_window, backtest_duration_ret]
+
+[in_backtesting_window, backtest_duration]= backtest_v1()
+// SUPER TREND FAST
+// Inputs
+bool i_st_display = input.bool(defval=true, title='Display', group=g_st)
+color i_pos_col = input.color(defval=color.green, title='Positive', group=g_ch)
+color i_neg_col = input.color(defval=#FF5250, title='Negative', group=g_ch)
+
+// Supertrend Calculation
+[supertrend, direction] = ta.supertrend(fast_supertrend_factor, fast_supertrend_period)
+bool upTrend = direction < 0
+bool downTrend = direction > 0
+
+// Plotting Supertrend
+plot(i_st_display and upTrend ? supertrend : na, title="Supertrend Up", color=i_pos_col, style=plot.style_linebr, linewidth=2,  force_overlay =true)
+plot(i_st_display and downTrend ? supertrend : na, title="Supertrend Down", color=i_neg_col, style=plot.style_linebr, linewidth=2, force_overlay =true)
+
+// Lower timeframe trend signals
+bool downTrend_ltf = downTrend
+bool upTrend_ltf = upTrend
+
+// ==================================
+// Entry and Exit Logic
+// ==================================
+// Concept:
+// - One-directional entry (no hedging).
+// - Exit when LTF signal turns off, even if HTF still agrees.
+// - Entry only if LTF and HTF are aligned.
+
+// === Exit Scenarios ===
+// Short exit when LTF downtrend signal disappears
+if in_backtesting_window and not downTrend_ltf and strategy.position_size < 0
+    strategy.close("Short")
+
+// Long exit when LTF uptrend signal disappears
+if in_backtesting_window and not upTrend_ltf and strategy.position_size > 0
+    strategy.close("Long")
+
+// === Entry Scenarios ===
+// Short entry when both HTF and LTF signal a downtrend
+if downTrend_ltf and in_backtesting_window
+    if strategy.position_size > 0
+        strategy.close("Long")
+    if strategy.position_size == 0
+        strategy.entry("Short", strategy.short, qty=position_size)
+
+// Long entry when both HTF and LTF signal an uptrend
+if upTrend_ltf and in_backtesting_window
+    if strategy.position_size < 0
+        strategy.close("Short")
+    if strategy.position_size == 0
+        strategy.entry("Long", strategy.long, qty=position_size)

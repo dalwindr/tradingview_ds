@@ -1,0 +1,102 @@
+//@version=6
+strategy("bollinger band", overlay=false, fill_orders_on_standard_ohlc = true)
+g_ch = "dalwinder"
+g_st ="dalwinder"
+backtest_start_ts = input.time(timestamp("11 Sep 2025 10:00 +0000"), title="Backtest Start")
+backtest_end_ts   = input.time(timestamp("13 Sep 2050 13:25 +0000"), title="Backtest End")
+
+int fast_supertrend_period = input.int(defval=100, title="ATR Length", minval=1, group=g_st)
+float fast_supertrend_factor = input.float(defval=4, title="Factor", minval=0.01, step=0.01, group=g_st)
+int slow_suptrend_period = input.int(defval=150, title="ATR Length", minval=1, group=g_st)
+float slow_supertrend_factor = input.float(defval=15.0, title="Factor", minval=0.01, step=0.01, group=g_st)
+position_size = input.int(1, title="Position Size", minval=1)
+stop_signal = true
+stop_signal_2 = false
+
+m3 = timeframe.period == "3"
+m5 = timeframe.period == "5"
+m10 = timeframe.period == "10"
+m15= timeframe.period == "15" //and not(stop_signal)
+m30 = timeframe.period ==  "30"
+m60 = timeframe.period == "60"
+// fast_supertrend_period:= m15? 50:fast_supertrend_period
+// fast_supertrend_factor:= m15? 1.8:fast_supertrend_factor
+
+
+backtest_v1() =>
+    // Backtest window (editable via inputs)
+
+    // Calculate duration in days
+    backtest_duration = (backtest_end_ts - backtest_start_ts) / (1000 * 60 * 60 * 24)
+    backtest_duration_ret = str.format("Backtest Duration: {0,number,#.##} days", backtest_duration)
+
+    // Whether current bar is inside the window
+    in_backtesting_window = (time >= backtest_start_ts) and (time <= backtest_end_ts)
+
+    [in_backtesting_window, backtest_duration_ret]
+
+[in_backtesting_window, backtest_duration]= backtest_v1()
+
+src = close
+base_length = input.int(200, "Base MA Length")
+mult = input.float(0.8, "Bollinger Band Multiplier")
+sensitivity_factor = input.float(1.0, "Sensitivity Factor (Higher = More Responsive)")
+
+// === Bollinger Band Squeeze Detection ===
+squeeze_lookback = input.int(15, title="Squeeze Lookback")
+avg_sqeeze= input.float(0.75, title="Squeeze Lookback", maxval=1.0)
+
+bollinger_band(src, length, mult, sensitivity_factor) =>
+    basis = ta.sma(src, length)
+    stdev = ta.stdev(src, length)
+    band_width = mult * stdev
+    upper = basis + band_width
+    lower = basis - band_width
+    in_band = src > lower and src < upper       // Inside expected range = no breakout
+    breakout_up = src > upper                    // Potential breakout to the upside
+    breakout_down = src < lower                  // Potential breakout to the downside
+    dynamic_length = na(stdev) ? length : math.max(1, length - int(sensitivity_factor * stdev))
+    dynamic_ma = ta.sma(src, dynamic_length)
+    [dynamic_ma, basis, in_band, breakout_up, breakout_down,band_width]
+
+
+
+// 4. Adjust sensitivity (Milestone 4)
+[dynamic_ma,basis, in_band, breakout_up, breakout_down, band_width] = bollinger_band(src, base_length, mult, sensitivity_factor)
+
+// ploting
+color_ma = breakout_up ? color.rgb(15, 239, 131) : breakout_down ? color.red : color.white
+plot(basis, color=color_ma, title="Adaptive MA (Milestone1)", linewidth=2, force_overlay = true)
+plot(dynamic_ma, color=color.rgb(255, 152, 0), title="Dynamic MA (Milestone4)", linewidth=1, force_overlay = true)
+plot(basis +band_width, title="Volatility (Band Width)", color=color.blue, linewidth=1,  force_overlay = true)
+plot(basis -band_width, title="Volatility (Band Width)", color=color.blue, linewidth=1,  force_overlay = true)
+
+average_bw = ta.sma(band_width, squeeze_lookback)
+is_squeeze = band_width > (average_bw * avg_sqeeze)
+
+
+// === Visual Cues ===
+//bgcolor(is_squeeze ? color.new(color.orange, 85) : na, title="Squeeze Background")
+//plotshape(is_squeeze, title="Squeeze Signal", style=shape.circle, location=location.belowbar, size=size.tiny, color=color.orange,force_overlay = true)
+
+is_expansion = band_width > (average_bw * avg_sqeeze)
+
+// === Directional Expansion Detection ===
+bullish_expansion = is_expansion and breakout_up
+bearish_expansion = is_expansion and breakout_down
+
+bullish_breakout_after_squeeze =bullish_expansion  //was_squeezing and
+bearish_breakout_after_squeeze =bearish_expansion  //was_squeezing and
+
+//plotshape(bullish_breakout_after_squeeze, title="Bullish Breakout", style=shape.labelup,location=location.abovebar, color=color.green, text="Bull", force_overlay = true)
+
+//plotshape(bearish_breakout_after_squeeze, title="Bearish Breakout", style=shape.labeldown,location=location.belowbar, color=color.red, text="Bear", force_overlay = true)
+// SUPER TREND FAST
+bool i_st_display = input.bool(defval=true, title='Display', group=g_st)
+color i_pos_col = input.color(defval=color.green,title='Positive', group=g_ch)
+color i_neg_col = input.color(defval=#FF5250, title='Negative', group=g_ch)
+[supertrend, direction] = ta.supertrend(fast_supertrend_factor, fast_supertrend_period)
+upTrend = direction < 0
+downTrend = direction > 0
+upTrend_temp = plot(i_st_display  and upTrend ? supertrend : na, title="Supertrend Up", color=i_pos_col, style=plot.style_linebr, force_overlay = true)
+downTrend_temp = plot(i_st_display and downTrend ? supertrend: na , title="Supertrend Down", color=i_neg_col, style=plot.style_linebr, force_overlay = true)
