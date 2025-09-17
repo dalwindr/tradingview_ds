@@ -1,0 +1,42 @@
+/*
+2. Volatility-Based Dynamic Period Adjustment
+
+How it helps avoid wrong trades:
+
+Adapts to Volatility: By adjusting the SST period based on the Average True Range (ATR), this approach increases the sensitivity of the indicator in high volatility markets and decreases it during low volatility periods. This means that in calmer markets, the strategy will be less reactive, while in volatile conditions, it will allow more frequent signals but only when the market is showing significant movement.
+
+Reduces False Signals: In periods of low volatility, where price movements are subtle or unclear, the adjusted period prevents the strategy from getting "trigger happy" and executing trades that aren't supported by sufficient market movement.
+
+Real-world benefit: By adapting the period based on market volatility, you reduce the chances of being caught in small, insignificant price fluctuations that lead to losing trades.
+
+
+*/
+
+
+//@version=5
+indicator("Volatility-Based Dynamic Period Adjustment", overlay=true)
+
+// Inputs
+window = input.int(100, title="Window for Direction Shifts")
+atr_period = input.int(14, title="ATR Period")
+choppy_threshold = input.int(5, title="Choppy Threshold", minval=1)
+sst_period_base = input.int(14, title="Base SST Period")
+sst_period_max = input.int(40, title="Max SST Period")
+
+// FST Calculation
+fst_factor = input.float(3.0, title="FST Factor")
+fst_period = input.int(14, title="FST Period")
+[supertrend, direction] = ta.supertrend(fst_factor, fst_period)
+
+// Direction change detection
+direction_flip = ta.change(direction)
+flip_count = ta.sum(direction_flip ? 1 : 0, window)
+is_choppy = flip_count > choppy_threshold
+
+// Dynamic SST Period Adjustment based on volatility (ATR) and frequency of direction shifts
+atr_value = ta.atr(atr_period)
+sst_period = is_choppy ? sst_period_max : sst_period_base + math.ceil(atr_value / 10)
+
+// Plot SST
+sst = ta.supertrend(fst_factor, sst_period)
+plot(sst, title="SST", color=color.green)
