@@ -1,0 +1,45 @@
+/*
+4. Adaptive SST Adjustment Based on Direction Shifts
+
+How it helps avoid wrong trades:
+
+Considers Market Trend Duration: By considering the duration of the current trend, this approach helps avoid entering trades when the market is in a consolidation or reversal phase. If the market is in a long, strong trend, the system will stick to its original SST factor and let the trend play out. However, if the trend is weak or reversal-prone, the SST factor will be adjusted to be less aggressive.
+
+Prevents Overtrading During Trend Reversals: When a trend is losing momentum or transitioning to a new direction, the system will adjust to avoid entering trades prematurely. It reduces trades in "false" breakout situations where the market quickly reverses.
+
+Real-world benefit: This helps avoid entering trades when the market is undergoing a reversal or slow change, reducing losses from fake breakouts or retracements.
+
+
+
+*/
+
+//@version=5
+indicator("Adaptive SST Based on Direction Shifts", overlay=true)
+
+// Inputs
+window = input.int(100, title="Window for Direction Shifts")
+sst_factor_base = input.float(3.0, title="Base SST Factor")
+sst_factor_max = input.float(7.0, title="Max SST Factor")
+duration_threshold = input.int(20, title="Duration Threshold for Persistent Trends")
+
+// FST Calculation
+fst_factor = input.float(3.0, title="FST Factor")
+fst_period = input.int(14, title="FST Period")
+[supertrend, direction] = ta.supertrend(fst_factor, fst_period)
+
+// Direction change detection
+direction_flip = ta.change(direction)
+flip_count = ta.sum(direction_flip ? 1 : 0, window)
+is_choppy = flip_count > 5
+
+// Trend duration detection
+bars_since_last_shift = ta.barssince(direction_flip)
+is_persistent_trend = bars_since_last_shift > duration_threshold
+
+// Adjust SST factor based on direction shifts and market trend duration
+sst_factor = is_persistent_trend ? sst_factor_base : sst_factor_max
+sst_factor := is_choppy ? sst_factor_max : sst_factor
+
+// Plot SST
+sst = ta.supertrend(sst_factor, fst_period)
+plot(sst, title="Adaptive SST", color=color.green)

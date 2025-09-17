@@ -1,0 +1,144 @@
+//@version=5
+strategy("Everything Manual - No Ready-Made Indicators", overlay=false, default_qty_type=strategy.fixed, default_qty_value=25)
+
+// === ✅ Inputs ===
+atr_period       = input.int(14, "ATR Period")
+tp_atr_mult      = input.float(4.0, "TP ATR Multiple")
+sl_atr_mult      = input.float(2.5, "SL ATR Multiple")
+vol_spike_mult   = input.float(1.5, "Volume Spike Multiplier")
+vol_avg_len      = input.int(40, "Volume Avg Length")
+
+// === ✅ RSI Lengths (LTF, MTF, HTF simulated via length) ===
+rsi_len             = 26
+fast_rsi_len        = 40
+slow_rsi_len        = 70
+rsi_mtf_slow_len    = 140
+rsi_htf_slow_len    = 250
+
+// === ✅ Moving Average Lengths ===
+fast_ma_ltf_len     = 7
+medium_ma_ltf_len   = 14
+slow_ma_ltf_len     = 30
+ma_mtf_len          = 140
+ma_htf_len          = 250
+
+// === ✅ RSI Calculations ===
+rsi_ltf_period   = ta.rsi(close, rsi_len)
+fast_lft_rsi     = ta.sma(rsi_ltf_period, fast_rsi_len)
+slow_ltf_rsi     = ta.sma(rsi_ltf_period, slow_rsi_len)
+slow_mtf_rsi     = ta.sma(rsi_ltf_period, rsi_mtf_slow_len)
+slow_htf_rsi     = ta.sma(rsi_ltf_period, rsi_htf_slow_len)
+
+// === ✅ Moving Averages (Momentum Structure) ===
+momentum_ma_ltf_fast = ta.sma(close, fast_ma_ltf_len)
+momentum_ma_ltf_med  = ta.sma(close, medium_ma_ltf_len)
+momentum_ma_ltf_slow = ta.sma(close, slow_ma_ltf_len)
+momentum_ma_mtf_slow = ta.sma(close, ma_mtf_len)
+momentum_ma_htf_slow = ta.sma(close, ma_htf_len)
+
+// === ✅ Assign Working Variables ===
+rsi_fast = fast_lft_rsi
+rsi_slow = slow_ltf_rsi
+
+momentum_ma_fast = momentum_ma_ltf_fast
+momentum_ma_med  = momentum_ma_ltf_med
+momentum_ma_slow = momentum_ma_ltf_slow
+
+// Define start and end time for filtering
+start_year  = 2025
+start_month = 9
+start_day   = 11
+start_hour  = 10
+start_min   = 0
+
+end_year  = year(time)
+end_month = month(time)
+end_day   = dayofmonth(time)
+end_hour  = hour(time)
+end_min   = minute(time)
+
+// Generate Unix timestamps for the start and end times
+range_start = timestamp(start_year, start_month, start_day, start_hour, start_min)
+range_end   = timestamp(end_year, end_month, end_day, end_hour, end_min)
+
+// Check if current bar's time is within the specified range
+in_backtesting_window = (time >= range_start) and (time <= range_end)
+
+atr = ta.atr(atr_period)
+// // ⚠️ Important: Do not remove this section — required for logic.
+// -------------------------------------processing logic-------------------------------------
+// ✅======== Script purpose: Everything manual ( entry/ exit/ hard loss/ trail loss)
+// ✅ use volume, rsi, moving average with three timeframes (HTF , LTF , MTF)
+// ✅using three timeframes (HTF , LTF , MTF) just by extending the length of over ma , Not going to switch real TF or using request.security to club HTF, MTF, LTF
+// -------------------------------------processing logic-------------------------------------
+
+// === ✅ Volume Normalization ===
+minPrice    = ta.lowest(low, 100)
+maxPrice    = ta.highest(high, 100)
+priceRange  = maxPrice - minPrice
+priceRange  := priceRange == 0 ? 1 : priceRange  // Prevent division by zero
+
+volNorm     = (volume / ta.highest(volume, 100)) * (priceRange * 0.05)
+volNormAvg  = ta.sma(volNorm, vol_avg_len)
+
+volume_confirmed = volNorm > volNormAvg
+volume_spike     = volNorm > vol_spike_mult * volNormAvg
+
+// === ✅ Entry Conditions ===
+var int count = 0
+var bool rsi_entry_signal = false
+var bool momentum_confirmed = false
+
+// Check RSI crossover
+if not rsi_entry_signal
+    rsi_entry_signal := ta.crossover(rsi_fast, rsi_slow) and (rsi_fast > 30)
+else if rsi_fast < rsi_slow
+    rsi_entry_signal := false
+    momentum_confirmed := false
+
+// Confirm with momentum and volume
+if rsi_entry_signal and not momentum_confirmed
+    momentum_confirmed := (momentum_ma_med > momentum_ma_slow) and (volume_confirmed or volume_spike)
+
+// Final entry trigger
+if in_backtesting_window and rsi_entry_signal and momentum_confirmed and not momentum_confirmed[1]
+    count += 1
+    label_text = "Count=" + str.tostring(count) +
+                 "\nFast MA=" + str.tostring(momentum_ma_fast, "#.##") +
+                 "\nSlow MA=" + str.tostring(momentum_ma_slow, "#.##") +
+                 "\nRSI=" + str.tostring(rsi_ltf_period, "#.##") +
+                 "\nClose=" + str.tostring(close, format.mintick)
+
+    label.new(bar_index, high * 1.01, text=label_text, yloc=yloc.abovebar,
+              style=label.style_label_up, size=size.normal, color=color.rgb(197, 210, 220), force_overlay=true)
+
+    // OPTIONAL: Strategy Entry (comment out if not backtesting)
+    strategy.entry("Long", strategy.long)
+
+// === ✅ Plots ===
+// RSI lines
+plot(fast_lft_rsi, color=color.red, title="Fast RSI")
+plot(slow_ltf_rsi, color=color.green, title="Slow RSI")
+plot(50, color=color.gray, title="RSI Mid")
+plot(70, color=color.red, title="RSI Upper")
+plot(30, color=color.green, title="RSI Lower")
+
+// SUPER TREND
+int i_st_atr_period = input.int(defval=10, title="ATR Length", minval=1, group=g_st)
+float i_st_factor = input.float(defval=3.0, title="Factor", minval=0.01, step=0.01, group=g_st)
+[supertrend, direction] = ta.supertrend(i_st_factor, i_st_atr_period)
+supertrend := i_st_display and barstate.isfirst ? na : supertrend
+upTrend = plot(series=i_st_display and direction < 0 ? supertrend : na, title="Supertrend Up", color=i_pos_col, style=plot.style_linebr)
+downTrend = plot(series=i_st_display and direction < 0 ? na : supertrend, title="Supertrend Down", color=i_neg_col, style=plot.style_linebr)
+
+// MAs on price (visible in price chart if overlay=true)
+plot(in_backtesting_window ? momentum_ma_fast:na, color=color.green, title="Fast MA (Local)", linewidth=1, force_overlay = true)
+plot(in_backtesting_window ? momentum_ma_med:na, color=color.orange, title="Medium MA (Local)", linewidth=1, force_overlay = true)
+plot(in_backtesting_window ? momentum_ma_slow:na, color=color.red, title="Slow MA (Local)", linewidth=1, force_overlay = true)
+plot(in_backtesting_window ? momentum_ma_med:na, color=color.orange, title="Medium MA (Local)", linewidth=1, force_overlay = true)
+plot(in_backtesting_window ? momentum_ma_slow:na, color=color.red, title="Slow MA (Local)", linewidth=1, force_overlay = true)
+
+// Volume at bottom
+//plot((volume_confirmed or volume_spike) ? volNorm/100 + minPrice : na,title="Volume Bars", style=plot.style_columns, color=color.blue, force_overlay=true,transp=60)
+
+//plot(in_backtesting_window and (volume_confirmed or volume_spike)? volume: na, color=(close > open ? color.green : color.red), style=plot.style_columns, linewidth=1)

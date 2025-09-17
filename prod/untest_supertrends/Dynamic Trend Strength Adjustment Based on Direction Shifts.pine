@@ -1,0 +1,37 @@
+/*
+5. Dynamic Trend Strength Adjustment Based on Direction Shifts
+
+How it helps avoid wrong trades:
+
+Trend Strength Detection: This strategy adjusts the SST factor based on how strongly the market is trending. When there is a strong trend (few direction changes), the system uses a higher SST factor, making the system more sensitive to price moves. When the trend is weak (more frequent direction changes), the SST factor is lowered, making the system less reactive.
+
+Filters Out Weak Markets: By considering the strength of the trend (i.e., fewer direction changes), the system will avoid trading in weak or indecisive market conditions, where false signals are more common.
+
+Real-world benefit: Helps avoid entering trades during sideways or weak market conditions, which typically lead to choppy price action and losses.
+
+*/
+
+//@version=5
+indicator("Dynamic Trend Strength Adjustment", overlay=true)
+
+// Inputs
+window = input.int(100, title="Window for Direction Shifts")
+sst_factor_base = input.float(3.0, title="Base SST Factor")
+sst_factor_max = input.float(7.0, title="Max SST Factor")
+
+// FST Calculation
+fst_factor = input.float(3.0, title="FST Factor")
+fst_period = input.int(14, title="FST Period")
+[supertrend, direction] = ta.supertrend(fst_factor, fst_period)
+
+// Direction change detection
+direction_flip = ta.change(direction)
+flip_count = ta.sum(direction_flip ? 1 : 0, window)
+
+// Calculate trend strength based on direction shifts
+trend_strength = flip_count > 10 ? 1 : 0 // More direction changes = weaker trend
+sst_factor = trend_strength == 1 ? sst_factor_max : sst_factor_base
+
+// Plot SST
+sst = ta.supertrend(sst_factor, fst_period)
+plot(sst, title="Dynamic Trend SST", color=color.green)

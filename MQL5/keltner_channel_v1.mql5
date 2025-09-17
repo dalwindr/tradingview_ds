@@ -1,0 +1,106 @@
+
+#property strict
+
+input int length = 20;                    // Period for moving average
+input double mult = 2.0;                  // Multiplier for Keltner Channel
+input ENUM_APPLIED_PRICE src = PRICE_CLOSE; // Source price (close, open, etc.)
+input bool exp = true;                    // Use Exponential MA (true) or Simple MA (false)
+input ENUM_ATR_MODE BandsStyle = ATR_MODE_ATR; // Bands Style (ATR, True Range, Range)
+input int atrlength = 10;                 // ATR Length
+
+// Define global variables
+double upper[], lower[], ma[], rangema[];
+double bprice = 0.0, sprice = 0.0;
+
+// Function to calculate Exponential or Simple MA
+double Esma(int shift) {
+    if (exp) {
+        return iEMA(NULL, 0, length, 0, MODE_EMA, src, shift);
+    } else {
+        return iMA(NULL, 0, length, 0, MODE_SMA, src, shift);
+    }
+}
+
+// Function to calculate True Range or Average True Range or Range
+double RangeMA(int shift) {
+    if (BandsStyle == ATR_MODE_TR) {
+        return iATR(NULL, 0, atrlength, shift); // True Range
+    } else if (BandsStyle == ATR_MODE_ATR) {
+        return iATR(NULL, 0, atrlength, shift); // Average True Range
+    } else {
+        return iHigh(NULL, 0, shift) - iLow(NULL, 0, shift); // Range
+    }
+}
+
+// Initialization function
+int OnInit() {
+    // Set indicator buffers
+    SetIndexBuffer(0, upper);
+    SetIndexBuffer(1, lower);
+    SetIndexBuffer(2, ma);
+    SetIndexBuffer(3, rangema);
+
+    // Set the indicator names
+    IndicatorShortName("Keltner Channels Strategy");
+
+    return INIT_SUCCEEDED;
+}
+
+// Calculate the Keltner Channel values for each bar
+void OnCalculate(const int rates_total, const int prev_calculated, const datetime &time[],
+                 const double &open[], const double &high[], const double &low[], const double &close[],
+                 const long &tick_volume[], const long &volume[], const int &spread[]) {
+
+    int begin = rates_total - prev_calculated;
+
+    for (int i = begin; i >= 0; i--) {
+        ma[i] = Esma(i);                      // Calculate the moving average
+        rangema[i] = RangeMA(i);              // Calculate the range (True Range, ATR, or Range)
+        upper[i] = ma[i] + rangema[i] * mult; // Upper band of Keltner Channel
+        lower[i] = ma[i] - rangema[i] * mult; // Lower band of Keltner Channel
+    }
+}
+
+// Define the trading logic in OnTick
+void OnTick() {
+    double currentPrice = Close[0];
+    double maValue = Esma(0);  // Get the current MA value
+    double upperBand = upper[0];
+    double lowerBand = lower[0];
+
+    // Long entry condition (cross above the upper band)
+    if (currentPrice > upperBand) {
+        bprice = High[0] + MarketInfo(Symbol(), MODE_POINT);  // Set stop loss price
+        if (OrderSend(Symbol(), OP_BUY, 0.1, Ask, 2, bprice, 0, "Keltner Long", 0, 0, Blue) < 0) {
+            Print("Error opening long order: ", GetLastError());
+        }
+    }
+
+    // Short entry condition (cross below the lower band)
+    if (currentPrice < lowerBand) {
+        sprice = Low[0] - MarketInfo(Symbol(), MODE_POINT);  // Set stop loss price
+        if (OrderSend(Symbol(), OP_SELL, 0.1, Bid, 2, sprice, 0, "Keltner Short", 0, 0, Red) < 0) {
+            Print("Error opening short order: ", GetLastError());
+        }
+    }
+
+    // Check for exit conditions (exit long position if price goes below the MA or hits stop loss)
+    if (PositionSelect(Symbol())) {
+        if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+            if (currentPrice < maValue || High[0] >= bprice) {
+                if (OrderClose(PositionGetInteger(POSITION_TICKET), PositionGetDouble(POSITION_VOLUME), Bid, 2, Green) < 0) {
+                    Print("Error closing long order: ", GetLastError());
+                }
+            }
+        }
+
+        // Exit short position if price goes above the MA or hits stop loss
+        if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL) {
+            if (currentPrice > maValue || Low[0] <= sprice) {
+                if (OrderClose(PositionGetInteger(POSITION_TICKET), PositionGetDouble(POSITION_VOLUME), Ask, 2, Red) < 0) {
+                    Print("Error closing short order: ", GetLastError());
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,42 @@
+/*
+1. Frequency-Based Dynamic Factor Adjustment
+
+How it helps avoid wrong trades:
+
+Adaptive to Market Conditions: By adjusting the Supertrend (SST) factor based on the frequency of direction shifts (or trend reversals),
+ this approach makes your strategy more responsive to market conditions. When the market is choppy (frequent direction changes),
+ the SST factor is adjusted to be less sensitive, preventing the system from reacting too quickly to false signals.
+
+Avoids Overtrading: In a market with high direction shift frequency, adjusting the SST factor can help filter out noise and reduce unnecessary trades.
+It will stop your system from entering trades during unstable market conditions.
+
+Real-world benefit: This reduces the likelihood of entering trades in a market that's moving back and forth quickly without clear direction.
+
+
+*/
+
+//@version=5
+indicator("Frequency-Based Dynamic Factor Adjustment", overlay=true)
+// Inputs
+window = input.int(100, title="Window for Direction Shifts")
+choppy_threshold = input.int(5, title="Choppy Threshold", minval=1)
+sst_factor_base = input.float(3.0, title="Base SST Factor")
+sst_factor_max = input.float(7.0, title="Max SST Factor")
+
+// FST Calculation
+fst_factor = input.float(3.0, title="FST Factor")
+fst_period = input.int(14, title="FST Period")
+[supertrend, direction] = ta.supertrend(fst_factor, fst_period)
+
+// Direction change detection
+direction_flip = ta.change(direction)
+flip_count = ta.sum(direction_flip ? 1 : 0, window)
+is_choppy = flip_count > choppy_threshold
+
+// Dynamic SST Factor Adjustment based on frequency of direction shifts
+sst_factor = is_choppy ? sst_factor_max : sst_factor_base
+plot(sst_factor, title="Dynamic SST Factor", color=color.blue)
+
+// Plot SST
+sst = ta.supertrend(sst_factor, fst_period)
+plot(sst, title="SST", color=color.green)

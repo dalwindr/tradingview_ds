@@ -1,0 +1,39 @@
+/*
+3. Multi-Layer Adaptive Supertrend
+
+How it helps avoid wrong trades:
+
+Combines Different Timeframes: By using multiple layers of Fast Supertrend (FST) with different factors (like FST1, FST2, and FST3), this strategy benefits from a multi-timeframe analysis. This creates a more robust decision-making process that prevents false signals by providing confirmation across different layers of trend indicators.
+
+Weighs the Strength of the Market Trend: Weights are assigned to each layer (FST1, FST2, FST3) based on their sensitivity. In periods where multiple Supertrend layers agree, the signals are more reliable, filtering out weak or inconclusive trends.
+
+Prevents Overreaction: In choppy or low-volume markets, fewer layers will likely signal trade opportunities, preventing the system from overreacting to weak trends.
+
+Real-world benefit: The multi-layer system allows the strategy to only take trades when there's strong agreement across different layers, improving the quality of entries and avoiding "whipsaws" (false moves in the market).
+
+*/
+//@version=5
+indicator("Multi-Layer Adaptive Supertrend", overlay=true)
+
+// Inputs
+window = input.int(100, title="Window for Direction Shifts")
+sst_factor_base = input.float(3.0, title="Base SST Factor")
+sst_factor_max = input.float(7.0, title="Max SST Factor")
+fst1_factor = input.float(3.0, title="FST1 Factor")
+fst2_factor = input.float(4.0, title="FST2 Factor")
+fst3_factor = input.float(5.0, title="FST3 Factor")
+fst_period = input.int(14, title="FST Period")
+
+// FST Calculation for multiple layers
+[supertrend_1, direction_1] = ta.supertrend(fst1_factor, fst_period)
+[supertrend_2, direction_2] = ta.supertrend(fst2_factor, fst_period)
+[supertrend_3, direction_3] = ta.supertrend(fst3_factor, fst_period)
+
+// Weighting factors
+weight_1 = 0.5
+weight_2 = 0.3
+weight_3 = 0.2
+
+// Combined Supertrend based on weighted FST layers
+combined_supertrend = (supertrend_1 * weight_1) + (supertrend_2 * weight_2) + (supertrend_3 * weight_3)
+plot(combined_supertrend, title="Multi-Layer Adaptive SST", color=color.green)
